@@ -10,17 +10,18 @@ import {
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ChartConfiguration } from 'chart.js';
-import { DataService, Granularity } from './services/data.service';
+import { DataService, Granularity, SourceGroup, GROUP_COLORS } from './services/data.service';
 import { ThemeService } from './services/theme.service';
 import { SettingsService } from './services/settings.service';
 import { ChartPanelComponent } from './components/chart-panel.component';
 import { HeatmapComponent } from './components/heatmap.component';
 import { CountComponent } from './components/count.component';
 import { SparklineComponent } from './components/sparkline.component';
+import { CloudComponent } from './components/cloud.component';
 import { LogRow } from './models';
 
 type SortKey = 'date' | 'level' | 'service' | 'nrDic' | 'httpCode' | 'ip';
-type CrossKind = 'level' | 'status' | 'endpoint' | 'service' | 'ip' | 'text';
+type CrossKind = 'level' | 'status' | 'endpoint' | 'service' | 'ip' | 'text' | 'group' | 'dic';
 
 @Component({
   selector: 'app-root',
@@ -33,6 +34,7 @@ type CrossKind = 'level' | 'status' | 'endpoint' | 'service' | 'ip' | 'text';
     HeatmapComponent,
     CountComponent,
     SparklineComponent,
+    CloudComponent,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
@@ -45,7 +47,8 @@ export class App implements OnInit {
   // ---- dashboard layout (reorderable widgets) ----
   readonly editMode = signal(false);
   readonly defaultWidgets = [
-    'timeseries', 'levels', 'status', 'endpoints', 'ips', 'urls',
+    'timeseries', 'groups', 'groupTrend', 'cloud', 'statusTrend', 'pareto',
+    'levels', 'status', 'dicStatus', 'endpoints', 'ips', 'urls',
     'httpcodes', 'service', 'sourcePie', 'endpointPie', 'drilldown', 'heatmap',
   ];
   readonly widgets = signal<string[]>(this.loadOrder());
@@ -67,14 +70,24 @@ export class App implements OnInit {
         return this.data.topHttpCodes().length > 1;
       case 'service':
         return this.data.byService().length > 1;
+      case 'groups':
+      case 'groupTrend':
+        return this.data.sourceGroups().length > 0;
+      case 'dicStatus':
+        return this.data.byDicStatus().length > 0;
+      case 'pareto':
+        return this.data.sourcePareto().points.length > 1;
+      case 'statusTrend':
+        return this.data.statusTrend().series.length > 0;
       default:
         return true;
     }
   }
 
   widgetSpan(key: string): string {
-    if (key === 'heatmap') return 'span-3';
-    if (key === 'timeseries' || key === 'urls' || key === 'drilldown') return 'span-2';
+    if (key === 'heatmap' || key === 'cloud') return 'span-3';
+    if (key === 'timeseries' || key === 'urls' || key === 'drilldown' ||
+        key === 'groupTrend' || key === 'statusTrend' || key === 'pareto') return 'span-2';
     // pies widen when showing many slices so legends fit
     if (key === 'sourcePie') return this.sourcePieLimit() === 10 ? '' : 'span-2';
     if (key === 'endpointPie') return this.endpointPieLimit() === 10 ? '' : 'span-2';
@@ -97,6 +110,12 @@ export class App implements OnInit {
 
   private readonly WIDGET_TITLES: Record<string, string> = {
     timeseries: 'Динамика запросов и ошибок',
+    groups: 'Запросы по группам источников',
+    groupTrend: 'Динамика по группам',
+    cloud: 'Граф связей: источники ↔ эндпоинты',
+    statusTrend: 'Состав статусов во времени',
+    pareto: 'Концентрация нагрузки (Парето)',
+    dicStatus: 'Бизнес-статусы (cd_dic_status)',
     levels: 'Уровни логов',
     status: 'Классы HTTP-статусов',
     endpoints: 'Топ эндпоинтов (nr_dic)',
@@ -213,6 +232,77 @@ export class App implements OnInit {
     this.settings.set('widgetOrder', order);
   }
 
+  // ===================== Source-group manager (modal) =====================
+  readonly groupsModalOpen = signal(false);
+  readonly draftGroups = signal<SourceGroup[]>([]);
+  readonly groupSourceFilter = signal('');
+
+  openGroups(): void {
+    this.draftGroups.set(this.data.sourceGroups().map((g) => ({ ...g, members: [...g.members] })));
+    this.groupSourceFilter.set('');
+    this.groupsModalOpen.set(true);
+  }
+  closeGroups(): void {
+    this.groupsModalOpen.set(false);
+  }
+  addGroup(): void {
+    const groups = this.draftGroups();
+    const color = GROUP_COLORS[groups.length % GROUP_COLORS.length];
+    this.draftGroups.set([
+      ...groups,
+      { id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: 'Новая группа', color, members: [] },
+    ]);
+  }
+  removeGroup(id: string): void {
+    this.draftGroups.set(this.draftGroups().filter((g) => g.id !== id));
+  }
+  renameGroup(id: string, name: string): void {
+    this.draftGroups.set(this.draftGroups().map((g) => (g.id === id ? { ...g, name } : g)));
+  }
+  recolorGroup(id: string, color: string): void {
+    this.draftGroups.set(this.draftGroups().map((g) => (g.id === id ? { ...g, color } : g)));
+  }
+  /** Group id that currently owns this ip in the draft, or '' if none. */
+  draftGroupOf(ip: string): string {
+    return this.draftGroups().find((g) => g.members.includes(ip))?.id ?? '';
+  }
+  /** Move a source into a group (or out of all when groupId is ''). */
+  assignSource(ip: string, groupId: string): void {
+    this.draftGroups.set(
+      this.draftGroups().map((g) => {
+        const without = g.members.filter((m) => m !== ip);
+        if (g.id === groupId) return { ...g, members: [...without, ip] };
+        return { ...g, members: without };
+      }),
+    );
+  }
+  saveGroupsModal(): void {
+    this.data.saveGroups(this.draftGroups().filter((g) => g.name.trim()));
+    this.groupsModalOpen.set(false);
+  }
+  filteredGroupSources() {
+    const q = this.groupSourceFilter().trim().toLowerCase();
+    const list = this.data.allSources();
+    if (!q) return list.slice(0, 200);
+    return list
+      .filter((s) => s.key.toLowerCase().includes(q) || this.data.resolveName(s.key).toLowerCase().includes(q))
+      .slice(0, 200);
+  }
+
+  // ===================== Saved filter presets =====================
+  readonly presetName = signal('');
+  saveCurrentPreset(): void {
+    const name = this.presetName().trim();
+    if (!name) return;
+    this.data.savePreset(name);
+    this.presetName.set('');
+  }
+  applyPreset(name: string): void {
+    if (!name) return;
+    this.data.applyPreset(name);
+    this.page.set(0);
+  }
+
   // table state
   readonly sortKey = signal<SortKey>('date');
   readonly sortDir = signal<'asc' | 'desc'>('desc');
@@ -278,6 +368,12 @@ export class App implements OnInit {
         this.textInput.set(nv);
         break;
       }
+      case 'group':
+        this.data.groupFilter.set(this.data.groupFilter() === value ? '' : value);
+        break;
+      case 'dic':
+        this.data.toggleSet(this.data.dicStatuses, value);
+        break;
     }
     this.page.set(0);
   }
@@ -433,6 +529,19 @@ export class App implements OnInit {
   readonly timeSeriesConfig = computed<ChartConfiguration<'line'>>(() => {
     const p = this.themeSvc.palette();
     const buckets = this.data.timeSeries();
+    const pr = buckets.length > 60 ? 0 : 2;
+    const opts = this.lineOptions(p);
+    // add a right-hand axis for the error-rate %
+    opts!.scales = {
+      ...opts!.scales,
+      rate: {
+        position: 'right',
+        beginAtZero: true,
+        suggestedMax: 100,
+        ticks: { color: p.textMuted, callback: (v) => v + '%' },
+        grid: { drawOnChartArea: false },
+      },
+    };
     return {
       type: 'line',
       data: {
@@ -446,7 +555,7 @@ export class App implements OnInit {
             fill: true,
             tension: 0.35,
             borderWidth: 2,
-            pointRadius: buckets.length > 60 ? 0 : 2,
+            pointRadius: pr,
             pointHoverRadius: 4,
           },
           {
@@ -457,12 +566,25 @@ export class App implements OnInit {
             fill: false,
             tension: 0.35,
             borderWidth: 2,
-            pointRadius: buckets.length > 60 ? 0 : 2,
+            pointRadius: pr,
+            pointHoverRadius: 4,
+          },
+          {
+            label: 'Доля ошибок, %',
+            yAxisID: 'rate',
+            data: buckets.map((b) => (b.total ? Math.round((b.errors / b.total) * 1000) / 10 : 0)),
+            borderColor: p.series[3],
+            backgroundColor: 'transparent',
+            borderDash: [5, 4],
+            fill: false,
+            tension: 0.35,
+            borderWidth: 1.5,
+            pointRadius: 0,
             pointHoverRadius: 4,
           },
         ],
       },
-      options: this.lineOptions(p),
+      options: opts,
     };
   });
 
@@ -653,6 +775,162 @@ export class App implements OnInit {
         ],
       },
       options: this.clickable(this.doughnutOptions(p), () => items.map((i) => i.key), 'service'),
+    };
+  });
+
+  // ===================== SOURCE GROUPS =====================
+  readonly cloudPalette = computed(() => {
+    const p = this.themeSvc.palette();
+    return { text: p.text, textMuted: p.textMuted, grid: p.grid, surface: p.surface };
+  });
+
+  readonly groupBarConfig = computed<ChartConfiguration<'bar'>>(() => {
+    const p = this.themeSvc.palette();
+    const items = this.data.byGroup();
+    const cfg: ChartConfiguration<'bar'> = {
+      type: 'bar',
+      data: {
+        labels: items.map((i) => this.data.groupName(i.key)),
+        datasets: [
+          {
+            label: 'Запросы',
+            data: items.map((i) => i.count),
+            backgroundColor: items.map((i) => this.data.groupColor(i.key)),
+            borderRadius: 6,
+            maxBarThickness: 46,
+            minBarLength: 3,
+          },
+        ],
+      },
+      options: { ...this.barOptions(p), indexAxis: 'y' },
+    };
+    cfg.options = this.clickable(cfg.options, () => items.map((i) => i.key), 'group');
+    return cfg;
+  });
+
+  readonly groupPieConfig = computed<ChartConfiguration<'doughnut'>>(() => {
+    const p = this.themeSvc.palette();
+    const items = this.data.byGroup();
+    return {
+      type: 'doughnut',
+      data: {
+        labels: items.map((i) => this.data.groupName(i.key)),
+        datasets: [
+          {
+            data: items.map((i) => i.count),
+            backgroundColor: items.map((i) => this.data.groupColor(i.key)),
+            borderColor: p.surface,
+            borderWidth: 2,
+            hoverOffset: 6,
+          },
+        ],
+      },
+      options: this.clickable(this.doughnutOptions(p), () => items.map((i) => i.key), 'group'),
+    };
+  });
+
+  readonly groupTrendConfig = computed<ChartConfiguration<'line'>>(() => {
+    const p = this.themeSvc.palette();
+    const ts = this.data.groupTimeSeries();
+    const pr = ts.labels.length > 60 ? 0 : 2;
+    return {
+      type: 'line',
+      data: {
+        labels: ts.labels,
+        datasets: ts.series.map((s) => ({
+          label: s.name,
+          data: s.data,
+          borderColor: s.color,
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.35,
+          borderWidth: 2,
+          pointRadius: pr,
+          pointHoverRadius: 4,
+        })),
+      },
+      options: this.lineOptions(p),
+    };
+  });
+
+  readonly dicStatusConfig = computed<ChartConfiguration<'bar'>>(() => {
+    const raw = this.data.topDicStatus();
+    const cfg = this.hbarConfig(raw, 'Запросы');
+    cfg.options = this.clickable(cfg.options, () => raw.map((i) => i.key), 'dic');
+    return cfg;
+  });
+
+  readonly paretoConfig = computed<ChartConfiguration<'bar'>>(() => {
+    const p = this.themeSvc.palette();
+    const pts = this.data.sourcePareto().points;
+    const short = (s: string) => (s.length > 22 ? s.slice(0, 21) + '…' : s);
+    const opts = this.barOptions(p);
+    opts!.scales = {
+      ...opts!.scales,
+      cum: {
+        position: 'right',
+        beginAtZero: true,
+        max: 100,
+        ticks: { color: p.textMuted, callback: (v) => v + '%' },
+        grid: { drawOnChartArea: false },
+      },
+    };
+    return {
+      type: 'bar',
+      data: {
+        labels: pts.map((i) => short(i.key)),
+        datasets: [
+          {
+            type: 'line',
+            label: 'Накопленная доля, %',
+            yAxisID: 'cum',
+            data: pts.map((i) => Math.round(i.cumPct * 10) / 10),
+            borderColor: p.series[3],
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            tension: 0.3,
+            pointRadius: 2,
+          } as unknown as ChartConfiguration<'bar'>['data']['datasets'][number],
+          {
+            label: 'Запросы',
+            data: pts.map((i) => i.count),
+            backgroundColor: p.accent,
+            borderRadius: 5,
+            maxBarThickness: 34,
+          },
+        ],
+      },
+      options: opts,
+    };
+  });
+
+  readonly statusTrendConfig = computed<ChartConfiguration<'line'>>(() => {
+    const p = this.themeSvc.palette();
+    const ts = this.data.statusTrend();
+    const pr = ts.labels.length > 60 ? 0 : 2;
+    const opts = this.lineOptions(p);
+    opts!.scales = {
+      ...opts!.scales,
+      y: { ...(opts!.scales as Record<string, unknown>)['y'] as object, stacked: true },
+    };
+    return {
+      type: 'line',
+      data: {
+        labels: ts.labels,
+        datasets: ts.series.map((s) => ({
+          label: s.key,
+          data: s.data,
+          borderColor: this.statusColor(s.key, p),
+          backgroundColor: this.statusColor(s.key, p) + '44',
+          fill: true,
+          stack: 'status',
+          tension: 0.3,
+          borderWidth: 1.5,
+          pointRadius: pr,
+          pointHoverRadius: 4,
+        })),
+      },
+      options: opts,
     };
   });
 

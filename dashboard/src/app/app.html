@@ -30,6 +30,12 @@
         <button class="btn btn--ghost" (click)="exportPdf()" [disabled]="!data.rows().length" title="Отчёт в PDF">⤓ PDF</button>
       }
       @if (data.rows().length) {
+        <button class="btn" (click)="openGroups()" title="Группы источников">
+          👥 Группы
+          @if (data.sourceGroups().length) {
+            <span class="cnt">{{ data.sourceGroups().length }}</span>
+          }
+        </button>
         <button class="btn" [class.btn--primary]="editMode()" (click)="editMode.set(!editMode())"
                 title="Переставить блоки местами">⚙ {{ editMode() ? 'Готово' : 'Настроить' }}</button>
       }
@@ -88,6 +94,21 @@
           <button class="chip" (click)="quickRange(24 * 7)">7д</button>
           <button class="chip" (click)="quickRange(24 * 30)">30д</button>
         </div>
+        <div class="filters__presets">
+          @if (data.presets().length) {
+            <select class="preset-select" [ngModel]="''" (ngModelChange)="applyPreset($event)" title="Применить сохранённый фильтр">
+              <option value="">Пресеты…</option>
+              @for (p of data.presets(); track p.name) {
+                <option [value]="p.name">{{ p.name }}</option>
+              }
+            </select>
+          }
+          @if (data.hasActiveFilters()) {
+            <input class="preset-input" type="text" placeholder="имя пресета"
+                   [ngModel]="presetName()" (ngModelChange)="presetName.set($event)" />
+            <button class="btn btn--ghost btn--sm" (click)="saveCurrentPreset()" [disabled]="!presetName().trim()" title="Сохранить текущие фильтры">💾</button>
+          }
+        </div>
         <div class="filters__result">
           Показано <b>{{ fmtNum(data.filtered().length) }}</b> из {{ fmtNum(data.rows().length) }}
         </div>
@@ -135,6 +156,20 @@
             </div>
           }
 
+          <!-- source group -->
+          @if (data.sourceGroups().length) {
+            <div class="field">
+              <label>Группа источников</label>
+              <select [ngModel]="data.groupFilter()" (ngModelChange)="data.groupFilter.set($event); onFilterChange()">
+                <option value="">Все</option>
+                @for (g of data.sourceGroups(); track g.id) {
+                  <option [value]="g.id">{{ g.name }}</option>
+                }
+                <option [value]="data.UNGROUPED">Без группы</option>
+              </select>
+            </div>
+          }
+
           <!-- levels -->
           <div class="field field--chips">
             <label>Уровень</label>
@@ -156,6 +191,19 @@
               }
             </div>
           </div>
+
+          <!-- business statuses -->
+          @if (data.allDicStatuses().length > 1) {
+            <div class="field field--chips">
+              <label>Бизнес-статус (cd_dic_status)</label>
+              <div class="chips chips--scroll">
+                @for (ds of data.allDicStatuses(); track ds) {
+                  <button class="chip" [class.chip--on]="data.dicStatuses().has(ds)"
+                          (click)="data.toggleSet(data.dicStatuses, ds); onFilterChange()">{{ ds }}</button>
+                }
+              </div>
+            </div>
+          }
 
           <!-- endpoints -->
           @if (data.allEndpoints().length > 1) {
@@ -182,17 +230,33 @@
 
     <!-- ===== KPI cards ===== -->
     @let k = data.kpis();
+    @let d = data.periodDeltas();
     <section class="kpis">
       <div class="kpi">
         <span class="kpi__label">Всего запросов</span>
         <span class="kpi__value"><app-count [value]="k.total" /></span>
-        <span class="kpi__sub">≈ {{ fmtNum(k.perHour) }}/час</span>
+        <span class="kpi__sub">
+          ≈ {{ fmtNum(k.perHour) }}/час
+          @if (d && d.hasPrev) {
+            <span class="delta delta--good" title="vs предыдущий период такой же длины">
+              {{ d.totalPct >= 0 ? '▲' : '▼' }} {{ fmtPct(d.totalPct >= 0 ? d.totalPct : -d.totalPct) }}
+            </span>
+          }
+        </span>
         <app-sparkline [points]="tsTotals()" color="#6366f1" />
       </div>
       <div class="kpi kpi--err">
         <span class="kpi__label">Ошибки</span>
         <span class="kpi__value"><app-count [value]="k.errors" /></span>
-        <span class="kpi__sub">{{ fmtPct(k.errorRate) }} от всех</span>
+        <span class="kpi__sub">
+          {{ fmtPct(k.errorRate) }} от всех
+          @if (d && d.hasPrev) {
+            <span class="delta" [class.delta--bad]="d.errRatePts > 0" [class.delta--good]="d.errRatePts <= 0"
+                  title="изменение доли ошибок vs предыдущий период">
+              {{ d.errRatePts >= 0 ? '▲' : '▼' }} {{ fmtPct(d.errRatePts >= 0 ? d.errRatePts : -d.errRatePts) }} п.п.
+            </span>
+          }
+        </span>
         <app-sparkline [points]="tsErrors()" color="#fb7185" />
       </div>
       <div class="kpi kpi--ok">
@@ -221,6 +285,45 @@
             <span>{{ ins.text }}</span>
           </div>
         }
+      </section>
+    }
+
+    <!-- ===== Group comparison table ===== -->
+    @if (data.sourceGroups().length) {
+      <section class="panel gcompare">
+        <header class="panel__head">
+          <h3>Сравнение групп источников</h3>
+          <button class="btn btn--ghost btn--sm" (click)="openGroups()">⚙ Управление</button>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Группа</th>
+                <th>Источников</th>
+                <th>Запросов</th>
+                <th>Доля</th>
+                <th>Ошибок</th>
+                <th>Error rate</th>
+                <th>Топ-эндпоинт</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (g of data.groupStats(); track g.id) {
+                <tr class="logrow" (click)="data.groupFilter.set(data.groupFilter() === g.id ? '' : g.id); onFilterChange()"
+                    [class.row--active]="data.groupFilter() === g.id">
+                  <td class="nowrap"><span class="gdot" [style.background]="g.color"></span>{{ g.name }}</td>
+                  <td>{{ fmtNum(g.sources) }}</td>
+                  <td><b>{{ fmtNum(g.count) }}</b></td>
+                  <td>{{ fmtPct(g.share) }}</td>
+                  <td>{{ fmtNum(g.errors) }}</td>
+                  <td><span [class.http--5xx]="g.errorRate > 5" [class.http--2xx]="g.errorRate < 1">{{ fmtPct(g.errorRate) }}</span></td>
+                  <td class="nowrap">{{ g.topEndpoint }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
       </section>
     }
 
@@ -274,6 +377,53 @@
               }
             </div>
           </app-chart-panel>
+        }
+        @case ('groups') {
+          <app-chart-panel title="Запросы по группам источников" subtitle="клик — фильтр по группе"
+                           [config]="groupBarConfig()" [height]="barHeight(data.byGroup().length)"
+                           [bodyMaxHeight]="fs ? fsHeight() : 360"
+                           [empty]="!data.byGroup().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+        }
+        @case ('groupTrend') {
+          <app-chart-panel title="Динамика по группам" [subtitle]="'Гранулярность: ' + data.effectiveGranularity()"
+                           [config]="groupTrendConfig()" [height]="fs ? fsHeight() : 300"
+                           [empty]="!data.groupTimeSeries().series.length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+        }
+        @case ('cloud') {
+          <section class="panel">
+            <header class="panel__head">
+              <div>
+                <h3>Граф связей: источники ↔ эндпоинты</h3>
+                <p>размер узла — объём запросов · цвет источника — группа</p>
+              </div>
+              @if (!fs && !editMode()) {
+                <button class="panel__fs" (click)="openFocus(key)" title="На весь экран">⛶</button>
+              }
+            </header>
+            <div class="panel__body">
+              @if (data.graph().nodes.length) {
+                <app-cloud [data]="data.graph()" [palette]="cloudPalette()" [height]="fs ? fsHeight() : 440" />
+              } @else {
+                <div class="panel__empty" [style.height.px]="fs ? fsHeight() : 440">Нет данных для отображения</div>
+              }
+            </div>
+          </section>
+        }
+        @case ('statusTrend') {
+          <app-chart-panel title="Состав статусов во времени" subtitle="накопление по классам"
+                           [config]="statusTrendConfig()" [height]="fs ? fsHeight() : 300"
+                           [empty]="!data.statusTrend().series.length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+        }
+        @case ('pareto') {
+          <app-chart-panel title="Концентрация нагрузки (Парето)" subtitle="источники + накопленная доля"
+                           [config]="paretoConfig()" [height]="fs ? fsHeight() : 320"
+                           [empty]="!data.sourcePareto().points.length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+        }
+        @case ('dicStatus') {
+          <app-chart-panel title="Бизнес-статусы (cd_dic_status)" subtitle="клик — фильтр"
+                           [config]="dicStatusConfig()" [height]="barHeight(data.topDicStatus().length)"
+                           [bodyMaxHeight]="fs ? fsHeight() : 420"
+                           [empty]="!data.topDicStatus().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
         }
         @case ('levels') {
           <app-chart-panel title="Уровни логов" [config]="levelConfig()" [height]="fs ? fsHeight() : 260"
@@ -515,6 +665,64 @@
         </div>
       </footer>
     </section>
+  }
+
+  <!-- ===== Source-group manager ===== -->
+  @if (groupsModalOpen()) {
+    <div class="modal" (click)="closeGroups()">
+      <div class="modal__card" (click)="$event.stopPropagation()">
+        <header class="modal__head">
+          <h3>👥 Группы источников</h3>
+          <button class="btn btn--icon" (click)="closeGroups()" title="Закрыть">✕</button>
+        </header>
+        <p class="modal__hint">
+          Объедините источники в группы, чтобы сравнивать их нагрузку. Настройки сохраняются между сессиями.
+        </p>
+
+        <div class="modal__groups">
+          @for (g of draftGroups(); track g.id) {
+            <div class="ggroup">
+              <input type="color" [ngModel]="g.color" (ngModelChange)="recolorGroup(g.id, $event)" title="Цвет" />
+              <input class="ggroup__name" type="text" [ngModel]="g.name" (ngModelChange)="renameGroup(g.id, $event)" />
+              <span class="ggroup__cnt">{{ g.members.length }} источн.</span>
+              <button class="btn btn--ghost btn--sm" (click)="removeGroup(g.id)" title="Удалить группу">🗑</button>
+            </div>
+          }
+          <button class="btn btn--ghost btn--sm" (click)="addGroup()">＋ Добавить группу</button>
+        </div>
+
+        <div class="modal__sources">
+          <div class="modal__search">
+            <input type="text" placeholder="Поиск источника (IP или имя)…"
+                   [ngModel]="groupSourceFilter()" (ngModelChange)="groupSourceFilter.set($event)" />
+          </div>
+          <div class="srclist">
+            @for (s of filteredGroupSources(); track s.key) {
+              <div class="srcrow">
+                <div class="srcrow__id">
+                  <span class="src-name">{{ displaySource(s.key) }}</span>
+                  <span class="src-ip">{{ s.key }} · {{ fmtNum(s.count) }}</span>
+                </div>
+                <select [ngModel]="draftGroupOf(s.key)" (ngModelChange)="assignSource(s.key, $event)">
+                  <option value="">— без группы —</option>
+                  @for (g of draftGroups(); track g.id) {
+                    <option [value]="g.id">{{ g.name }}</option>
+                  }
+                </select>
+              </div>
+            }
+            @if (!filteredGroupSources().length) {
+              <div class="srclist__empty">Источники не найдены</div>
+            }
+          </div>
+        </div>
+
+        <footer class="modal__foot">
+          <button class="btn btn--ghost" (click)="closeGroups()">Отмена</button>
+          <button class="btn btn--primary" (click)="saveGroupsModal()">Сохранить</button>
+        </footer>
+      </div>
+    </div>
   }
 
   @if (toast()) {

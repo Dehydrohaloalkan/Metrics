@@ -1,7 +1,8 @@
-import { Injectable, computed, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import Papa from 'papaparse';
 import { LogRow, SourceInfo, ERROR_LEVELS, WARN_LEVELS } from '../models';
 import { parseCsvStream } from '../csv-stream';
+import { SettingsService } from './settings.service';
 
 declare global {
   interface Window {
@@ -47,14 +48,48 @@ export interface Heatmap {
   grandTotal: number;
 }
 
+/** A named group of source IPs, persisted between sessions. */
+export interface SourceGroup {
+  id: string;
+  name: string;
+  color: string;
+  members: string[]; // source IPs belonging to the group
+}
+
+export interface GroupStat {
+  id: string;
+  name: string;
+  color: string;
+  count: number;
+  errors: number;
+  errorRate: number;
+  share: number;
+  sources: number;
+  topEndpoint: string;
+}
+
+export interface FilterPreset {
+  name: string;
+  state: Record<string, unknown>;
+}
+
 const DAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+/** Default palette handed to freshly created source groups. */
+export const GROUP_COLORS = [
+  '#6366f1', '#22d3ee', '#34d399', '#fbbf24', '#f472b6',
+  '#fb7185', '#a78bfa', '#38bdf8', '#4ade80', '#f59e0b',
+];
 
 @Injectable({ providedIn: 'root' })
 export class DataService {
+  private readonly settings = inject(SettingsService);
+
   readonly rows = signal<LogRow[]>([]);
   readonly members = signal<Map<string, string>>(new Map()); // ip -> name
   readonly source = signal<SourceInfo | null>(null);
   readonly UNKNOWN = 'неизвестный пользователь';
+  readonly UNGROUPED = '__ungrouped__';
   readonly loading = signal(false);
   readonly progress = signal<{ phase: string; pct: number } | null>(null);
   readonly status = signal<string>('');
@@ -72,16 +107,68 @@ export class DataService {
   readonly statusClasses = signal<Set<string>>(new Set());
   readonly service = signal<string>(''); // '' = all
   readonly endpoints = signal<Set<string>>(new Set());
+  readonly dicStatuses = signal<Set<string>>(new Set());
+  readonly groupFilter = signal<string>(''); // '' = all groups; or a group id / UNGROUPED
   readonly ipQuery = signal<string>('');
   readonly textQuery = signal<string>('');
   readonly onlyErrors = signal<boolean>(false);
   readonly granularity = signal<Granularity>('auto');
+
+  // --- Persisted source groups & saved filter presets ----------------------
+  readonly sourceGroups = signal<SourceGroup[]>(this.settings.get<SourceGroup[]>('sourceGroups', []));
+  readonly presets = signal<FilterPreset[]>(this.settings.get<FilterPreset[]>('filterPresets', []));
+
+  /** ip -> group id, for quick membership lookups. */
+  readonly groupIndex = computed<Map<string, string>>(() => {
+    const m = new Map<string, string>();
+    for (const g of this.sourceGroups()) {
+      for (const ip of g.members) if (!m.has(ip)) m.set(ip, g.id);
+    }
+    return m;
+  });
+
+  groupOf(ip: string): string {
+    return this.groupIndex().get(ip) || this.UNGROUPED;
+  }
+  groupName(id: string): string {
+    if (id === this.UNGROUPED) return 'Без группы';
+    return this.sourceGroups().find((g) => g.id === id)?.name || id;
+  }
+  groupColor(id: string): string {
+    if (id === this.UNGROUPED) return '#8b98a9';
+    return this.sourceGroups().find((g) => g.id === id)?.color || '#6366f1';
+  }
+
+  saveGroups(groups: SourceGroup[]): void {
+    this.sourceGroups.set(groups);
+    this.settings.set('sourceGroups', groups);
+    // a filtered-away group should not keep the dashboard empty
+    if (this.groupFilter() && this.groupFilter() !== this.UNGROUPED &&
+        !groups.some((g) => g.id === this.groupFilter())) {
+      this.groupFilter.set('');
+    }
+  }
 
   // --- Distinct option lists (from full dataset) ----------------------------
   readonly allLevels = computed(() => this.distinct((r) => r.level));
   readonly allStatusClasses = computed(() => this.distinct((r) => r.statusClass).sort());
   readonly allServices = computed(() => this.distinct((r) => r.service).sort());
   readonly allEndpoints = computed(() => this.distinct((r) => r.nrDic).sort());
+  readonly allDicStatuses = computed(() =>
+    this.distinct((r) => r.dicStatus).filter((v) => v && v !== '—').sort(),
+  );
+
+  /** Every source IP seen in the dataset, with its all-time request count. */
+  readonly allSources = computed<Counted[]>(() => {
+    const map = new Map<string, number>();
+    for (const r of this.rows()) {
+      if (!r.ip || r.ip === '—') continue;
+      map.set(r.ip, (map.get(r.ip) || 0) + 1);
+    }
+    return [...map.entries()]
+      .map(([key, count]) => ({ key, count, errors: 0 }))
+      .sort((a, b) => b.count - a.count);
+  });
 
   readonly dataRange = computed<{ min: number; max: number } | null>(() => {
     const ts = this.rows()
@@ -92,24 +179,30 @@ export class DataService {
   });
 
   // --- Filtered rows --------------------------------------------------------
-  readonly filtered = computed<LogRow[]>(() => {
-    const from = this.dateFrom();
-    const to = this.dateTo();
+  // Everything except the date window, so period-over-period can re-window the
+  // same population, and the date filter stays cheap to re-apply.
+  readonly nonDateFiltered = computed<LogRow[]>(() => {
     const lv = this.levels();
     const sc = this.statusClasses();
     const svc = this.service();
     const eps = this.endpoints();
+    const dic = this.dicStatuses();
+    const grp = this.groupFilter();
+    const gi = grp ? this.groupIndex() : null;
     const ip = this.ipQuery().trim().toLowerCase();
     const text = this.textQuery().trim().toLowerCase();
     const onlyErr = this.onlyErrors();
 
     return this.rows().filter((r) => {
-      if (from != null && (isNaN(r.ts) || r.ts < from)) return false;
-      if (to != null && (isNaN(r.ts) || r.ts > to)) return false;
       if (lv.size && !lv.has(r.level)) return false;
       if (sc.size && !sc.has(r.statusClass)) return false;
       if (svc && r.service !== svc) return false;
       if (eps.size && !eps.has(r.nrDic)) return false;
+      if (dic.size && !dic.has(r.dicStatus)) return false;
+      if (grp) {
+        const id = gi!.get(r.ip) || this.UNGROUPED;
+        if (id !== grp) return false;
+      }
       if (onlyErr && !r.isError) return false;
       if (ip) {
         const name = this.resolveName(r.ip).toLowerCase();
@@ -123,6 +216,17 @@ export class DataService {
     });
   });
 
+  readonly filtered = computed<LogRow[]>(() => {
+    const from = this.dateFrom();
+    const to = this.dateTo();
+    if (from == null && to == null) return this.nonDateFiltered();
+    return this.nonDateFiltered().filter((r) => {
+      if (from != null && (isNaN(r.ts) || r.ts < from)) return false;
+      if (to != null && (isNaN(r.ts) || r.ts > to)) return false;
+      return true;
+    });
+  });
+
   readonly hasActiveFilters = computed(
     () =>
       this.dateFrom() != null ||
@@ -131,6 +235,8 @@ export class DataService {
       this.statusClasses().size > 0 ||
       this.service() !== '' ||
       this.endpoints().size > 0 ||
+      this.dicStatuses().size > 0 ||
+      this.groupFilter() !== '' ||
       this.ipQuery().trim() !== '' ||
       this.textQuery().trim() !== '' ||
       this.onlyErrors(),
@@ -182,6 +288,54 @@ export class DataService {
     };
   });
 
+  // --- Period-over-period -------------------------------------------------
+  // Compares the active window with the immediately preceding window of the
+  // same length (same non-date filters). null when there is nothing to compare.
+  readonly periodDeltas = computed<{
+    totalPct: number;
+    curErrRate: number;
+    prevErrRate: number;
+    errRatePts: number;
+    hasPrev: boolean;
+  } | null>(() => {
+    const from = this.dateFrom();
+    const to = this.dateTo();
+    let a: number, b: number;
+    if (from != null && to != null) {
+      a = from;
+      b = to;
+    } else {
+      const r = this.dataRange();
+      if (!r) return null;
+      a = r.min;
+      b = r.max;
+    }
+    const len = b - a;
+    if (len <= 0) return null;
+    const prevA = a - len;
+
+    let curT = 0, curE = 0, prevT = 0, prevE = 0;
+    for (const r of this.nonDateFiltered()) {
+      if (isNaN(r.ts)) continue;
+      if (r.ts >= a && r.ts <= b) {
+        curT++;
+        if (r.isError) curE++;
+      } else if (r.ts >= prevA && r.ts < a) {
+        prevT++;
+        if (r.isError) prevE++;
+      }
+    }
+    const curErrRate = curT ? (curE / curT) * 100 : 0;
+    const prevErrRate = prevT ? (prevE / prevT) * 100 : 0;
+    return {
+      totalPct: prevT ? ((curT - prevT) / prevT) * 100 : 0,
+      curErrRate,
+      prevErrRate,
+      errRatePts: curErrRate - prevErrRate,
+      hasPrev: prevT > 0,
+    };
+  });
+
   // --- Aggregations for charts ---------------------------------------------
   readonly effectiveGranularity = computed<EffectiveGranularity>(() => {
     const g = this.granularity();
@@ -230,6 +384,183 @@ export class DataService {
   readonly topHttpCodes = computed<Counted[]>(() =>
     this.countBy((r) => r.httpStatus, (r) => r.httpStatus !== '—'),
   );
+
+  // --- Business status (cd_dic_status) -------------------------------------
+  readonly byDicStatus = computed<Counted[]>(() =>
+    this.countBy((r) => r.dicStatus, (r) => !!r.dicStatus && r.dicStatus !== '—'),
+  );
+  readonly topDicStatus = computed<Counted[]>(() => this.limited(this.byDicStatus(), 14));
+
+  // --- Source groups: counts, comparison, per-group time series ------------
+  readonly byGroup = computed<Counted[]>(() => {
+    const gi = this.groupIndex();
+    const map = new Map<string, Counted>();
+    for (const r of this.filtered()) {
+      const id = gi.get(r.ip) || this.UNGROUPED;
+      let c = map.get(id);
+      if (!c) {
+        c = { key: id, count: 0, errors: 0 };
+        map.set(id, c);
+      }
+      c.count++;
+      if (r.isError) c.errors++;
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  });
+
+  readonly groupStats = computed<GroupStat[]>(() => {
+    const gi = this.groupIndex();
+    const total = this.filtered().length;
+    const agg = new Map<string, { count: number; errors: number; ips: Set<string>; ep: Map<string, number> }>();
+    for (const r of this.filtered()) {
+      const id = gi.get(r.ip) || this.UNGROUPED;
+      let a = agg.get(id);
+      if (!a) {
+        a = { count: 0, errors: 0, ips: new Set(), ep: new Map() };
+        agg.set(id, a);
+      }
+      a.count++;
+      if (r.isError) a.errors++;
+      if (r.ip && r.ip !== '—') a.ips.add(r.ip);
+      if (r.nrDic && r.nrDic !== '—') a.ep.set(r.nrDic, (a.ep.get(r.nrDic) || 0) + 1);
+    }
+    return [...agg.entries()]
+      .map(([id, a]) => {
+        let topEndpoint = '—', mx = -1;
+        for (const [k, v] of a.ep) if (v > mx) { mx = v; topEndpoint = k; }
+        return {
+          id,
+          name: this.groupName(id),
+          color: this.groupColor(id),
+          count: a.count,
+          errors: a.errors,
+          errorRate: a.count ? (a.errors / a.count) * 100 : 0,
+          share: total ? (a.count / total) * 100 : 0,
+          sources: a.ips.size,
+          topEndpoint,
+        };
+      })
+      .sort((x, y) => y.count - x.count);
+  });
+
+  readonly groupTimeSeries = computed<{
+    labels: string[];
+    series: { id: string; name: string; color: string; data: number[]; total: number }[];
+  }>(() => {
+    const g = this.effectiveGranularity();
+    const gi = this.groupIndex();
+    const keys = new Set<number>();
+    const perGroup = new Map<string, Map<number, number>>();
+    for (const r of this.filtered()) {
+      if (isNaN(r.ts)) continue;
+      const id = gi.get(r.ip) || this.UNGROUPED;
+      const bk = this.bucketKey(r.date!, g);
+      keys.add(bk);
+      let m = perGroup.get(id);
+      if (!m) {
+        m = new Map();
+        perGroup.set(id, m);
+      }
+      m.set(bk, (m.get(bk) || 0) + 1);
+    }
+    const sorted = [...keys].sort((a, b) => a - b);
+    const labels = sorted.map((k) => this.bucketLabel(k, g));
+    const series = [...perGroup.entries()]
+      .map(([id, m]) => ({
+        id,
+        name: this.groupName(id),
+        color: this.groupColor(id),
+        data: sorted.map((k) => m.get(k) || 0),
+        total: [...m.values()].reduce((a, b) => a + b, 0),
+      }))
+      .sort((a, b) => b.total - a.total);
+    return { labels, series };
+  });
+
+  // --- Pareto (source concentration) ---------------------------------------
+  readonly sourcePareto = computed<{ points: { key: string; count: number; cumPct: number }[]; total: number }>(() => {
+    const src = this.bySource().filter((s) => s.key !== '—');
+    const total = src.reduce((s, i) => s + i.count, 0);
+    let cum = 0;
+    const points = src.slice(0, 20).map((s) => {
+      cum += s.count;
+      return { key: this.sourceLabel(s.key), count: s.count, cumPct: total ? (cum / total) * 100 : 0 };
+    });
+    return { points, total };
+  });
+
+  // --- Status-class composition over time (stacked area) -------------------
+  readonly statusTrend = computed<{ labels: string[]; series: { key: string; data: number[] }[] }>(() => {
+    const g = this.effectiveGranularity();
+    const classes = ['2xx', '3xx', '4xx', '5xx', '1xx', '—'];
+    const keys = new Set<number>();
+    const per = new Map<string, Map<number, number>>();
+    for (const c of classes) per.set(c, new Map());
+    for (const r of this.filtered()) {
+      if (isNaN(r.ts)) continue;
+      const bk = this.bucketKey(r.date!, g);
+      keys.add(bk);
+      const m = per.get(r.statusClass) ?? per.get('—')!;
+      m.set(bk, (m.get(bk) || 0) + 1);
+    }
+    const sorted = [...keys].sort((a, b) => a - b);
+    const labels = sorted.map((k) => this.bucketLabel(k, g));
+    const series = classes
+      .map((key) => ({ key, data: sorted.map((k) => per.get(key)!.get(k) || 0) }))
+      .filter((s) => s.data.some((v) => v > 0));
+    return { labels, series };
+  });
+
+  // --- Source ↔ endpoint relationship graph (force-directed cloud) ---------
+  readonly graph = computed<{
+    nodes: { id: string; label: string; kind: 'source' | 'endpoint'; count: number; color: string }[];
+    links: { source: string; target: string; value: number }[];
+  }>(() => {
+    const gi = this.groupIndex();
+    const SEP = String.fromCharCode(1);
+    const srcCount = new Map<string, number>();
+    const epCount = new Map<string, number>();
+    const linkMap = new Map<string, number>();
+    for (const r of this.filtered()) {
+      const ip = r.ip || '—';
+      const ep = r.nrDic || '—';
+      if (ip === '—' && ep === '—') continue;
+      srcCount.set(ip, (srcCount.get(ip) || 0) + 1);
+      epCount.set(ep, (epCount.get(ep) || 0) + 1);
+      const lk = ip + SEP + ep;
+      linkMap.set(lk, (linkMap.get(lk) || 0) + 1);
+    }
+    const topSrc = [...srcCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 18);
+    const topEp = [...epCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14);
+    const srcSet = new Set(topSrc.map((s) => s[0]));
+    const epSet = new Set(topEp.map((e) => e[0]));
+    const nodes = [
+      ...topSrc.map(([id, count]) => ({
+        id: 's' + id,
+        label: this.sourceLabel(id),
+        kind: 'source' as const,
+        count,
+        color: this.groupColor(gi.get(id) || this.UNGROUPED),
+      })),
+      ...topEp.map(([id, count]) => ({
+        id: 'e' + id,
+        label: id,
+        kind: 'endpoint' as const,
+        count,
+        color: '#22d3ee',
+      })),
+    ];
+    const links: { source: string; target: string; value: number }[] = [];
+    for (const [lk, value] of linkMap) {
+      const i = lk.indexOf(SEP);
+      const ip = lk.slice(0, i);
+      const ep = lk.slice(i + 1);
+      if (srcSet.has(ip) && epSet.has(ep)) {
+        links.push({ source: 's' + ip, target: 'e' + ep, value });
+      }
+    }
+    return { nodes, links };
+  });
 
   // --- Sources (IP + member name) ------------------------------------------
   readonly selectedSource = signal<string>(''); // '' = auto (top source)
@@ -476,10 +807,61 @@ export class DataService {
     this.statusClasses.set(new Set());
     this.service.set('');
     this.endpoints.set(new Set());
+    this.dicStatuses.set(new Set());
+    this.groupFilter.set('');
     this.ipQuery.set('');
     this.textQuery.set('');
     this.onlyErrors.set(false);
     this.selectedSource.set('');
+  }
+
+  // --- Saved filter presets -------------------------------------------------
+  private captureState(): Record<string, unknown> {
+    return {
+      dateFrom: this.dateFrom(),
+      dateTo: this.dateTo(),
+      levels: [...this.levels()],
+      statusClasses: [...this.statusClasses()],
+      service: this.service(),
+      endpoints: [...this.endpoints()],
+      dicStatuses: [...this.dicStatuses()],
+      groupFilter: this.groupFilter(),
+      ipQuery: this.ipQuery(),
+      textQuery: this.textQuery(),
+      onlyErrors: this.onlyErrors(),
+    };
+  }
+
+  savePreset(name: string): void {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const next = [...this.presets().filter((p) => p.name !== trimmed), { name: trimmed, state: this.captureState() }];
+    this.presets.set(next);
+    this.settings.set('filterPresets', next);
+  }
+
+  applyPreset(name: string): void {
+    const p = this.presets().find((x) => x.name === name);
+    if (!p) return;
+    const s = p.state as Record<string, unknown>;
+    const arr = (v: unknown) => (Array.isArray(v) ? (v as string[]) : []);
+    this.dateFrom.set((s['dateFrom'] as number | null) ?? null);
+    this.dateTo.set((s['dateTo'] as number | null) ?? null);
+    this.levels.set(new Set(arr(s['levels'])));
+    this.statusClasses.set(new Set(arr(s['statusClasses'])));
+    this.service.set((s['service'] as string) ?? '');
+    this.endpoints.set(new Set(arr(s['endpoints'])));
+    this.dicStatuses.set(new Set(arr(s['dicStatuses'])));
+    this.groupFilter.set((s['groupFilter'] as string) ?? '');
+    this.ipQuery.set((s['ipQuery'] as string) ?? '');
+    this.textQuery.set((s['textQuery'] as string) ?? '');
+    this.onlyErrors.set(!!s['onlyErrors']);
+  }
+
+  deletePreset(name: string): void {
+    const next = this.presets().filter((p) => p.name !== name);
+    this.presets.set(next);
+    this.settings.set('filterPresets', next);
   }
 
   toggleSet(sig: ReturnType<typeof signal<Set<string>>>, value: string): void {

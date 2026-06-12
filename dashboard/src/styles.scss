@@ -78,3 +78,82 @@ input,
 select {
   font-family: inherit;
 }
+
+/* ===== Print / PDF export ===== */
+/* Keep the report from "shifting": one predictable 2-column layout, no clipped
+   scroll areas, and widgets that never split across a page. */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    height: auto !important;
+  }
+  body {
+    font-size: 11px;
+  }
+
+  /* hide everything interactive / off-report */
+  .topbar__actions,
+  .filters,
+  .pager,
+  .edit-hint,
+  .toast,
+  .modal,
+  .overlay,
+  .focus,
+  .panel__fs,
+  .panel__tools,
+  .seg,
+  .seg-select,
+  .acts {
+    display: none !important;
+  }
+
+  .shell {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 10px !important;
+  }
+
+  .grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+  }
+  .span-2,
+  .span-3 {
+    grid-column: 1 / -1 !important;
+  }
+
+  /* never break a card across pages */
+  .kpi,
+  .widget,
+  .panel,
+  .insight,
+  .gcompare {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+    border-color: rgba(0, 0, 0, 0.18) !important;
+  }
+
+  /* unclip scroll regions so nothing is cut off */
+  .table-wrap,
+  .panel__body,
+  .chips--scroll,
+  .srclist {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* render chart backgrounds and colors faithfully */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

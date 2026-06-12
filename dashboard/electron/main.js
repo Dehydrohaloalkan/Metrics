@@ -127,6 +127,10 @@ ipcMain.handle('export:pdf', async () => {
       printBackground: true,
       landscape: true,
       pageSize: 'A4',
+      // Let the page's own @page rule drive size/margins so the print layout
+      // matches what the @media print stylesheet lays out (no shifting/cutoff).
+      preferCSSPageSize: true,
+      margins: { marginType: 'custom', top: 0, bottom: 0, left: 0, right: 0 },
     });
     const res = await dialog.showSaveDialog(mainWindow, {
       title: 'Сохранить отчёт',
