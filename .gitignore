@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# Angular build output
+dashboard/dist/
+dashboard/.angular/
+
+# Electron build output
+dashboard/release/
+
+# logs / temp
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,80 @@
+/* ===== Service Metrics — global styles & theming ===== */
+:root,
+[data-theme='dark'] {
+  --bg: #0d1117;
+  --bg-2: #0a0e14;
+  --surface: #161b22;
+  --surface-2: #1c2230;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --text: #e6edf3;
+  --text-muted: #8b98a9;
+  --accent: #6366f1;
+  --accent-soft: rgba(99, 102, 241, 0.16);
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --err: #fb7185;
+  --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.6);
+  --chip-bg: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme='light'] {
+  --bg: #f3f5f9;
+  --bg-2: #eaeef4;
+  --surface: #ffffff;
+  --surface-2: #f6f8fc;
+  --border: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.2);
+  --text: #1f2733;
+  --text-muted: #5b6675;
+  --accent: #6366f1;
+  --accent-soft: rgba(99, 102, 241, 0.12);
+  --ok: #059669;
+  --warn: #d97706;
+  --err: #e11d48;
+  --shadow: 0 12px 28px -16px rgba(15, 23, 42, 0.35);
+  --chip-bg: rgba(15, 23, 42, 0.04);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(1200px 600px at 80% -10%, var(--accent-soft), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, 'Inter', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input,
+select {
+  font-family: inherit;
+}

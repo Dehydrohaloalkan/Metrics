@@ -1,0 +1,88 @@
+{
+  "name": "dashboard",
+  "version": "1.0.0",
+  "description": "Service Metrics — дашборд для анализа логов сервиса",
+  "author": "Metrics",
+  "main": "electron/main.js",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test",
+    "electron": "cross-env ELECTRON_DEV=1 electron .",
+    "electron:dev": "concurrently -k -n NG,EL -c cyan,magenta \"ng serve\" \"wait-on tcp:4200 && cross-env ELECTRON_DEV=1 electron .\"",
+    "electron:build": "ng build && electron-builder --win portable nsis",
+    "electron:portable": "ng build && electron-builder --win portable"
+  },
+  "prettier": {
+    "printWidth": 100,
+    "singleQuote": true,
+    "overrides": [
+      {
+        "files": "*.html",
+        "options": {
+          "parser": "angular"
+        }
+      }
+    ]
+  },
+  "private": true,
+  "packageManager": "npm@11.6.2",
+  "build": {
+    "appId": "com.metrics.viewer",
+    "productName": "ServiceMetrics",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/dashboard/browser/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "data.csv",
+        "to": "data.csv"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "portable": {
+      "artifactName": "ServiceMetrics-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "ServiceMetrics-Setup.exe"
+    }
+  },
+  "dependencies": {
+    "@angular/common": "^21.1.0",
+    "@angular/compiler": "^21.1.0",
+    "@angular/core": "^21.1.0",
+    "@angular/forms": "^21.1.0",
+    "@angular/platform-browser": "^21.1.0",
+    "@angular/router": "^21.1.0",
+    "chart.js": "^4.5.1",
+    "papaparse": "^5.5.3",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^21.1.1",
+    "@angular/cli": "^21.1.1",
+    "@angular/compiler-cli": "^21.1.0",
+    "@types/papaparse": "^5.5.2",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^37.2.0",
+    "electron-builder": "^26.15.2",
+    "typescript": "~5.9.2",
+    "wait-on": "^9.0.10"
+  }
+}

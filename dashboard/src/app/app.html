@@ -1,0 +1,291 @@
+<div class="shell">
+  <!-- ===== Top bar ===== -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand__logo">◐</div>
+      <div class="brand__txt">
+        <h1>Service Metrics</h1>
+        <span>
+          @if (data.source(); as s) {
+            {{ s.name }} · {{ fmtNum(s.rows) }} строк
+          } @else {
+            анализ логов сервиса
+          }
+        </span>
+      </div>
+    </div>
+
+    <div class="topbar__actions">
+      @if (data.isElectron) {
+        <button class="btn" (click)="data.pickFile()">📂 Открыть CSV</button>
+        <button class="btn btn--ghost" (click)="data.loadDefault()" title="Перечитать data.csv рядом с приложением">↻</button>
+      } @else {
+        <label class="btn">
+          📂 Открыть CSV
+          <input type="file" accept=".csv,.log,.txt" hidden (change)="onFileInput($event)" />
+        </label>
+      }
+      <button class="btn btn--ghost" (click)="exportCsv()" [disabled]="!data.filtered().length" title="Экспорт отфильтрованного">⤓ CSV</button>
+      <button class="btn btn--icon" (click)="themeSvc.toggle()" title="Сменить тему">
+        {{ themeSvc.theme() === 'dark' ? '☀' : '☾' }}
+      </button>
+    </div>
+  </header>
+
+  @if (!data.rows().length) {
+    <!-- ===== Empty / status state ===== -->
+    <div class="empty">
+      <div class="empty__icon">📊</div>
+      <h2>{{ data.loading() ? 'Загрузка…' : 'Нет данных' }}</h2>
+      <p>
+        @if (data.status()) {
+          {{ data.status() }}
+        } @else {
+          Положите <code>data.csv</code> рядом с приложением или откройте файл вручную.
+        }
+      </p>
+      @if (data.isElectron) {
+        <button class="btn btn--primary" (click)="data.pickFile()">Выбрать CSV-файл</button>
+      } @else {
+        <label class="btn btn--primary">
+          Выбрать CSV-файл
+          <input type="file" accept=".csv,.log,.txt" hidden (change)="onFileInput($event)" />
+        </label>
+      }
+    </div>
+  } @else {
+    <!-- ===== Filters ===== -->
+    <section class="filters" [class.filters--collapsed]="!filtersOpen()">
+      <div class="filters__bar">
+        <button class="filters__toggle" (click)="filtersOpen.set(!filtersOpen())">
+          ⚙ Фильтры
+          @if (data.hasActiveFilters()) {
+            <span class="dot"></span>
+          }
+          <span class="caret">{{ filtersOpen() ? '▲' : '▼' }}</span>
+        </button>
+        <div class="filters__quick">
+          <span class="muted">Период:</span>
+          <button class="chip" (click)="quickRange('all')">Всё</button>
+          <button class="chip" (click)="quickRange(24)">24ч</button>
+          <button class="chip" (click)="quickRange(24 * 7)">7д</button>
+          <button class="chip" (click)="quickRange(24 * 30)">30д</button>
+        </div>
+        <div class="filters__result">
+          Показано <b>{{ fmtNum(data.filtered().length) }}</b> из {{ fmtNum(data.rows().length) }}
+        </div>
+        @if (data.hasActiveFilters()) {
+          <button class="btn btn--ghost btn--sm" (click)="data.resetFilters(); onFilterChange()">Сбросить</button>
+        }
+      </div>
+
+      @if (filtersOpen()) {
+        <div class="filters__grid">
+          <!-- date range -->
+          <div class="field">
+            <label>С даты</label>
+            <input type="datetime-local" [(ngModel)]="fromInput" />
+          </div>
+          <div class="field">
+            <label>По дату</label>
+            <input type="datetime-local" [(ngModel)]="toInput" />
+          </div>
+
+          <!-- text search -->
+          <div class="field field--grow">
+            <label>Поиск (message / url)</label>
+            <input type="text" placeholder="например: timeout, R000…"
+                   [ngModel]="data.textQuery()" (ngModelChange)="data.textQuery.set($event); onFilterChange()" />
+          </div>
+
+          <!-- ip search -->
+          <div class="field">
+            <label>IP источника</label>
+            <input type="text" placeholder="10.3.…"
+                   [ngModel]="data.ipQuery()" (ngModelChange)="data.ipQuery.set($event); onFilterChange()" />
+          </div>
+
+          <!-- service -->
+          @if (data.allServices().length > 1) {
+            <div class="field">
+              <label>Сервис</label>
+              <select [ngModel]="data.service()" (ngModelChange)="data.service.set($event); onFilterChange()">
+                <option value="">Все</option>
+                @for (s of data.allServices(); track s) {
+                  <option [value]="s">{{ s }}</option>
+                }
+              </select>
+            </div>
+          }
+
+          <!-- levels -->
+          <div class="field field--chips">
+            <label>Уровень</label>
+            <div class="chips">
+              @for (lv of data.allLevels(); track lv) {
+                <button class="chip" [class.chip--on]="data.levels().has(lv)"
+                        (click)="data.toggleSet(data.levels, lv); onFilterChange()">{{ lv }}</button>
+              }
+            </div>
+          </div>
+
+          <!-- status classes -->
+          <div class="field field--chips">
+            <label>HTTP-статус</label>
+            <div class="chips">
+              @for (sc of data.allStatusClasses(); track sc) {
+                <button class="chip" [class.chip--on]="data.statusClasses().has(sc)"
+                        (click)="data.toggleSet(data.statusClasses, sc); onFilterChange()">{{ sc }}</button>
+              }
+            </div>
+          </div>
+
+          <!-- endpoints -->
+          @if (data.allEndpoints().length > 1) {
+            <div class="field field--chips field--grow">
+              <label>Эндпоинт (nr_dic)</label>
+              <div class="chips chips--scroll">
+                @for (ep of data.allEndpoints(); track ep) {
+                  <button class="chip" [class.chip--on]="data.endpoints().has(ep)"
+                          (click)="data.toggleSet(data.endpoints, ep); onFilterChange()">{{ ep }}</button>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- only errors -->
+          <div class="field field--chips">
+            <label>Быстрый</label>
+            <button class="chip chip--toggle" [class.chip--on]="data.onlyErrors()"
+                    (click)="data.onlyErrors.set(!data.onlyErrors()); onFilterChange()">⚠ Только ошибки</button>
+          </div>
+        </div>
+      }
+    </section>
+
+    <!-- ===== KPI cards ===== -->
+    @let k = data.kpis();
+    <section class="kpis">
+      <div class="kpi">
+        <span class="kpi__label">Всего запросов</span>
+        <span class="kpi__value">{{ fmtNum(k.total) }}</span>
+        <span class="kpi__sub">≈ {{ fmtNum(k.perHour) }}/час</span>
+      </div>
+      <div class="kpi kpi--err">
+        <span class="kpi__label">Ошибки</span>
+        <span class="kpi__value">{{ fmtNum(k.errors) }}</span>
+        <span class="kpi__sub">{{ fmtPct(k.errorRate) }} от всех</span>
+      </div>
+      <div class="kpi kpi--ok">
+        <span class="kpi__label">Успешные (2xx)</span>
+        <span class="kpi__value">{{ fmtPct(k.successRate) }}</span>
+        <span class="kpi__sub">{{ fmtNum(k.warnings) }} предупр.</span>
+      </div>
+      <div class="kpi">
+        <span class="kpi__label">Уник. IP</span>
+        <span class="kpi__value">{{ fmtNum(k.uniqueIps) }}</span>
+        <span class="kpi__sub">{{ fmtNum(k.uniqueEndpoints) }} эндпоинтов</span>
+      </div>
+      <div class="kpi kpi--wide">
+        <span class="kpi__label">Период данных</span>
+        <span class="kpi__value kpi__value--sm">{{ fmtDate(k.from) }}</span>
+        <span class="kpi__sub">→ {{ fmtDate(k.to) }}</span>
+      </div>
+    </section>
+
+    <!-- ===== Charts ===== -->
+    <section class="grid">
+      <app-chart-panel class="span-2" title="Динамика запросов и ошибок"
+                       [subtitle]="'Гранулярность: ' + data.effectiveGranularity()"
+                       [config]="timeSeriesConfig()" [height]="300"
+                       [empty]="!data.timeSeries().length">
+        <div panelActions class="seg">
+          @for (g of ['auto','hour','day','month']; track g) {
+            <button class="seg__btn" [class.seg__btn--on]="data.granularity() === g"
+                    (click)="setGranularity($any(g))">{{ g === 'auto' ? 'авто' : g === 'hour' ? 'час' : g === 'day' ? 'день' : 'мес' }}</button>
+          }
+        </div>
+      </app-chart-panel>
+
+      <app-chart-panel title="Уровни логов" [config]="levelConfig()" [empty]="!data.byLevel().length" />
+      <app-chart-panel title="Классы HTTP-статусов" [config]="statusClassConfig()" [empty]="!data.byStatusClass().length" />
+
+      <app-chart-panel title="Топ эндпоинтов (nr_dic)" [config]="endpointsConfig()" [height]="300" [empty]="!data.topEndpoints().length" />
+      <app-chart-panel title="Топ источников (IP)" [config]="ipsConfig()" [height]="300" [empty]="!data.topIps().length" />
+
+      <app-chart-panel title="Топ URL" [config]="urlsConfig()" [height]="300" [empty]="!data.topUrls().length" />
+      @if (data.topHttpCodes().length > 1) {
+        <app-chart-panel title="HTTP-коды" [config]="httpCodesConfig()" [empty]="!data.topHttpCodes().length" />
+      }
+      @if (data.byService().length > 1) {
+        <app-chart-panel title="По сервисам" [config]="serviceConfig()" [empty]="!data.byService().length" />
+      }
+    </section>
+
+    <!-- ===== Logs table ===== -->
+    <section class="panel table-panel">
+      <header class="panel__head">
+        <h3>Журнал запросов</h3>
+        <span class="muted">{{ fmtNum(sorted().length) }} записей</span>
+      </header>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="sortable" (click)="setSort('date')">Время {{ sortArrow('date') }}</th>
+              <th class="sortable" (click)="setSort('level')">Уровень {{ sortArrow('level') }}</th>
+              <th class="sortable" (click)="setSort('service')">Сервис {{ sortArrow('service') }}</th>
+              <th class="sortable" (click)="setSort('nrDic')">nr_dic {{ sortArrow('nrDic') }}</th>
+              <th class="sortable" (click)="setSort('httpCode')">HTTP {{ sortArrow('httpCode') }}</th>
+              <th class="sortable" (click)="setSort('ip')">IP {{ sortArrow('ip') }}</th>
+              <th>Сообщение</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (r of pagedRows(); track r.id || $index) {
+              <tr class="logrow {{ rowClass(r) }}" (click)="toggleRow(r.id || '' + $index)">
+                <td class="nowrap">{{ r.dateRaw || '—' }}</td>
+                <td><span [class]="badgeClass(r)">{{ r.level }}</span></td>
+                <td class="nowrap">{{ r.service }}</td>
+                <td class="nowrap">{{ r.nrDic }}</td>
+                <td><span class="http http--{{ r.statusClass }}">{{ r.httpStatus }}</span></td>
+                <td class="nowrap">{{ r.ip }}</td>
+                <td class="msg">{{ r.message }}</td>
+              </tr>
+              @if (expandedId() === (r.id || '' + $index)) {
+                <tr class="detail">
+                  <td colspan="7">
+                    <div class="detail__grid">
+                      <div class="detail__full"><span class="detail__k">URL</span><span class="detail__v">{{ r.url || '—' }}</span></div>
+                      <div><span class="detail__k">nr_dic</span><span class="detail__v">{{ r.nrDic }}</span></div>
+                      <div><span class="detail__k">cd_dic_status</span><span class="detail__v">{{ r.dicStatus || '—' }}</span></div>
+                      <div><span class="detail__k">HTTP-статус</span><span class="detail__v">{{ r.httpStatus }}</span></div>
+                      <div><span class="detail__k">id</span><span class="detail__v">{{ r.id || '—' }}</span></div>
+                    </div>
+                  </td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <footer class="pager">
+        <div class="pager__size">
+          Строк на странице:
+          <select [ngModel]="pageSize()" (ngModelChange)="pageSize.set(+$event); page.set(0)">
+            <option [value]="25">25</option>
+            <option [value]="50">50</option>
+            <option [value]="100">100</option>
+            <option [value]="250">250</option>
+          </select>
+        </div>
+        <div class="pager__nav">
+          <button class="btn btn--ghost btn--sm" (click)="prevPage()" [disabled]="page() === 0">‹ Назад</button>
+          <span>{{ page() + 1 }} / {{ totalPages() }}</span>
+          <button class="btn btn--ghost btn--sm" (click)="nextPage()" [disabled]="page() >= totalPages() - 1">Вперёд ›</button>
+        </div>
+      </footer>
+    </section>
+  }
+</div>
