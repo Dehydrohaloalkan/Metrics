@@ -86,7 +86,7 @@
           Показано <b>{{ fmtNum(data.filtered().length) }}</b> из {{ fmtNum(data.rows().length) }}
         </div>
         @if (data.hasActiveFilters()) {
-          <button class="btn btn--ghost btn--sm" (click)="data.resetFilters(); onFilterChange()">Сбросить</button>
+          <button class="btn btn--ghost btn--sm" (click)="resetAll()">Сбросить</button>
         }
       </div>
 
@@ -106,14 +106,14 @@
           <div class="field field--grow">
             <label>Поиск (message / url)</label>
             <input type="text" placeholder="например: timeout, R000…"
-                   [ngModel]="data.textQuery()" (ngModelChange)="data.textQuery.set($event); onFilterChange()" />
+                   [ngModel]="textInput()" (ngModelChange)="onTextSearch($event)" />
           </div>
 
           <!-- ip search -->
           <div class="field">
             <label>Источник (IP или имя)</label>
             <input type="text" placeholder="10.3.… или имя"
-                   [ngModel]="data.ipQuery()" (ngModelChange)="data.ipQuery.set($event); onFilterChange()" />
+                   [ngModel]="ipInput()" (ngModelChange)="onIpSearch($event)" />
           </div>
 
           <!-- service -->

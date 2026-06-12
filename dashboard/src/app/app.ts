@@ -30,6 +30,12 @@ export class App implements OnInit {
   // ui state
   readonly filtersOpen = signal(true);
 
+  // debounced search inputs (avoid recomputing everything on each keystroke)
+  readonly textInput = signal('');
+  readonly ipInput = signal('');
+  private textTimer: ReturnType<typeof setTimeout> | undefined;
+  private ipTimer: ReturnType<typeof setTimeout> | undefined;
+
   ngOnInit(): void {
     this.data.loadMembers();
     this.data.loadDefault();
@@ -66,6 +72,31 @@ export class App implements OnInit {
   }
 
   onFilterChange(): void {
+    this.page.set(0);
+  }
+
+  onTextSearch(v: string): void {
+    this.textInput.set(v);
+    clearTimeout(this.textTimer);
+    this.textTimer = setTimeout(() => {
+      this.data.textQuery.set(v);
+      this.page.set(0);
+    }, 250);
+  }
+
+  onIpSearch(v: string): void {
+    this.ipInput.set(v);
+    clearTimeout(this.ipTimer);
+    this.ipTimer = setTimeout(() => {
+      this.data.ipQuery.set(v);
+      this.page.set(0);
+    }, 250);
+  }
+
+  resetAll(): void {
+    this.textInput.set('');
+    this.ipInput.set('');
+    this.data.resetFilters();
     this.page.set(0);
   }
 

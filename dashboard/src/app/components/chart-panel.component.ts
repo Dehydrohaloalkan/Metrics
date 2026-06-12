@@ -125,8 +125,27 @@ export class ChartPanelComponent implements AfterViewInit, OnDestroy {
       this.chart = null;
       return;
     }
-    // Recreate to cleanly pick up theme/type changes.
-    this.chart?.destroy();
-    this.chart = new Chart(this.canvasRef().nativeElement, cfg);
+    try {
+      // Update in place when possible — recreating the chart on every filter /
+      // theme / search change leaks animation buffers and eventually makes the
+      // canvases go blank. Only rebuild when the chart type actually changes.
+      if (this.chart && (this.chart.config as { type?: string }).type === cfg.type) {
+        this.chart.data = cfg.data;
+        this.chart.options = cfg.options ?? {};
+        this.chart.update('none');
+      } else {
+        this.chart?.destroy();
+        this.chart = new Chart(this.canvasRef().nativeElement, cfg);
+      }
+    } catch {
+      // If an update ever throws, drop the instance and rebuild from scratch
+      // so a single bad frame can't permanently break the panel.
+      try {
+        this.chart?.destroy();
+      } catch {
+        /* ignore */
+      }
+      this.chart = new Chart(this.canvasRef().nativeElement, cfg);
+    }
   }
 }
