@@ -348,6 +348,11 @@
                         <button class="seg__btn" (click)="setActivityView('heatmap')">Карта</button>
                       </div>
                       <div class="seg">
+                        <button class="seg__btn" [class.seg__btn--on]="activityDays() === 'all'" (click)="setActivityDays('all')">Все дни</button>
+                        <button class="seg__btn" [class.seg__btn--on]="activityDays() === 'weekdays'" (click)="setActivityDays('weekdays')">Будни</button>
+                        <button class="seg__btn" [class.seg__btn--on]="activityDays() === 'weekend'" (click)="setActivityDays('weekend')">Вых</button>
+                      </div>
+                      <div class="seg">
                         @for (b of heatBuckets; track b) {
                           <button class="seg__btn" [class.seg__btn--on]="data.heatmapBucketMin() === b"
                                   (click)="data.heatmapBucketMin.set(b)">{{ b }}м</button>

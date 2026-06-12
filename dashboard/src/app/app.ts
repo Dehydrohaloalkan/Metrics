@@ -377,31 +377,63 @@ export class App implements OnInit {
   readonly urlsConfig = computed<ChartConfiguration<'bar'>>(() => this.hbarConfig(this.data.topUrls(), 'Запросы'));
   // Activity: overlay one line per weekday over the time-of-day axis.
   readonly activityView = signal<'overlay' | 'heatmap'>(this.settings.get('activityView', 'overlay'));
+  readonly activityDays = signal<'all' | 'weekdays' | 'weekend'>(this.settings.get('activityDays', 'all'));
 
   setActivityView(v: 'overlay' | 'heatmap'): void {
     this.activityView.set(v);
     this.settings.set('activityView', v);
   }
+  setActivityDays(v: 'all' | 'weekdays' | 'weekend'): void {
+    this.activityDays.set(v);
+    this.settings.set('activityDays', v);
+  }
 
   readonly activityOverlayConfig = computed<ChartConfiguration<'line'>>(() => {
     const p = this.themeSvc.palette();
     const hm = this.data.heatmap();
+    const mode = this.activityDays();
+    const include =
+      mode === 'weekdays' ? [0, 1, 2, 3, 4] : mode === 'weekend' ? [5, 6] : [0, 1, 2, 3, 4, 5, 6];
+    const rows = hm.rows.filter((r) => include.includes(r.day));
+    const pr = hm.cols > 24 ? 0 : 2;
+
+    // thin per-weekday lines
+    const datasets = rows.map((row) => ({
+      label: row.label,
+      data: row.cells,
+      borderColor: p.series[row.day % p.series.length],
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      tension: 0.35,
+      pointRadius: pr,
+      pointHoverRadius: 4,
+      fill: false,
+    }));
+
+    // bold average line on top
+    const avg = new Array(hm.cols).fill(0);
+    if (rows.length) {
+      for (let c = 0; c < hm.cols; c++) {
+        let s = 0;
+        for (const r of rows) s += r.cells[c];
+        avg[c] = Math.round((s / rows.length) * 10) / 10;
+      }
+    }
+    datasets.push({
+      label: 'среднее',
+      data: avg,
+      borderColor: p.text,
+      backgroundColor: 'transparent',
+      borderWidth: 3.5,
+      tension: 0.35,
+      pointRadius: 0,
+      pointHoverRadius: 5,
+      fill: false,
+    } as (typeof datasets)[number]);
+
     return {
       type: 'line',
-      data: {
-        labels: hm.timeLabels,
-        datasets: hm.rows.map((row, idx) => ({
-          label: row.label,
-          data: row.cells,
-          borderColor: p.series[idx % p.series.length],
-          backgroundColor: 'transparent',
-          borderWidth: 2,
-          tension: 0.35,
-          pointRadius: hm.cols > 24 ? 0 : 2,
-          pointHoverRadius: 4,
-          fill: false,
-        })),
-      },
+      data: { labels: hm.timeLabels, datasets },
       options: this.lineOptions(p),
     };
   });
