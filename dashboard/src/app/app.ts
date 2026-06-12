@@ -4,6 +4,7 @@ import { ChartConfiguration } from 'chart.js';
 import { DataService, Granularity } from './services/data.service';
 import { ThemeService } from './services/theme.service';
 import { ChartPanelComponent } from './components/chart-panel.component';
+import { HeatmapComponent } from './components/heatmap.component';
 import { LogRow } from './models';
 
 type SortKey = 'date' | 'level' | 'service' | 'nrDic' | 'httpCode' | 'ip';
@@ -12,7 +13,7 @@ type SortKey = 'date' | 'level' | 'service' | 'nrDic' | 'httpCode' | 'ip';
   selector: 'app-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ChartPanelComponent],
+  imports: [FormsModule, ChartPanelComponent, HeatmapComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -486,6 +487,7 @@ export class App implements OnInit {
   ];
 
   readonly limitOptions = [15, 50, 100, 0]; // 0 = все
+  readonly heatBuckets = [60, 30, 15, 10]; // minutes per heatmap column
 
   limitLabel(n: number): string {
     return n === 0 ? 'Все' : String(n);

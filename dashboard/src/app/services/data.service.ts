@@ -29,6 +29,24 @@ export interface Counted {
   errors: number;
 }
 
+export interface HeatRow {
+  day: number; // 0 = Mon .. 6 = Sun
+  label: string;
+  cells: number[];
+  total: number;
+}
+
+export interface Heatmap {
+  bucketMin: number;
+  cols: number;
+  colLabels: string[]; // hour number at hour boundaries, '' otherwise
+  rows: HeatRow[];
+  max: number;
+  grandTotal: number;
+}
+
+const DAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
 @Injectable({ providedIn: 'root' })
 export class DataService {
   readonly rows = signal<LogRow[]>([]);
@@ -229,6 +247,42 @@ export class DataService {
     const ip = this.activeSource();
     if (!ip) return [];
     return this.countBy((r) => r.nrDic, (r) => r.ip === ip);
+  });
+
+  // --- Weekday × time-of-day heatmap (overlay all days by weekday) ---------
+  readonly heatmapBucketMin = signal(60); // minutes per column
+
+  readonly heatmap = computed<Heatmap>(() => {
+    const bm = this.heatmapBucketMin();
+    const cols = Math.ceil(1440 / bm);
+    const grid: number[][] = Array.from({ length: 7 }, () => new Array(cols).fill(0));
+    let max = 0;
+    let grandTotal = 0;
+
+    for (const r of this.filtered()) {
+      if (isNaN(r.ts)) continue;
+      const d = r.date!;
+      const day = (d.getDay() + 6) % 7; // Monday = 0
+      const idx = Math.floor((d.getHours() * 60 + d.getMinutes()) / bm);
+      const v = ++grid[day][idx];
+      if (v > max) max = v;
+      grandTotal++;
+    }
+
+    const colLabels: string[] = [];
+    for (let c = 0; c < cols; c++) {
+      const m = c * bm;
+      colLabels.push(m % 60 === 0 ? String(m / 60) : '');
+    }
+
+    const rows: HeatRow[] = grid.map((cells, day) => ({
+      day,
+      label: DAY_LABELS[day],
+      cells,
+      total: cells.reduce((a, b) => a + b, 0),
+    }));
+
+    return { bucketMin: bm, cols, colLabels, rows, max, grandTotal };
   });
 
   resolveName(ip: string): string {

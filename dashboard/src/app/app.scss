@@ -423,6 +423,18 @@
   font-weight: 650;
 }
 
+/* ===== Heatmap ===== */
+.heatmap-panel__body {
+  padding: 4px 18px 16px;
+}
+.heatmap-panel .panel__head {
+  align-items: flex-start;
+}
+.heatmap-panel .panel__head p {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
 /* ===== Table ===== */
 .table-panel {
   padding-bottom: 6px;

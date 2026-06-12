@@ -286,6 +286,25 @@
       </app-chart-panel>
     </section>
 
+    <!-- ===== Weekday × time heatmap ===== -->
+    <section class="panel heatmap-panel">
+      <header class="panel__head">
+        <div>
+          <h3>Активность по дням недели и времени</h3>
+          <p class="muted">все дни наложены по дню недели — видно, в какие часы/минуты пик запросов</p>
+        </div>
+        <div class="seg">
+          @for (b of heatBuckets; track b) {
+            <button class="seg__btn" [class.seg__btn--on]="data.heatmapBucketMin() === b"
+                    (click)="data.heatmapBucketMin.set(b)">{{ b }}м</button>
+          }
+        </div>
+      </header>
+      <div class="heatmap-panel__body">
+        <app-heatmap [data]="data.heatmap()" />
+      </div>
+    </section>
+
     <!-- ===== Logs table ===== -->
     <section class="panel table-panel">
       <header class="panel__head">
