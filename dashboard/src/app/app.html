@@ -26,6 +26,9 @@
         </label>
       }
       <button class="btn btn--ghost" (click)="exportCsv()" [disabled]="!data.filtered().length" title="Экспорт отфильтрованного">⤓ CSV</button>
+      @if (data.isElectron) {
+        <button class="btn btn--ghost" (click)="exportPdf()" [disabled]="!data.rows().length" title="Отчёт в PDF">⤓ PDF</button>
+      }
       @if (data.rows().length) {
         <button class="btn" [class.btn--primary]="editMode()" (click)="editMode.set(!editMode())"
                 title="Переставить блоки местами">⚙ {{ editMode() ? 'Готово' : 'Настроить' }}</button>
@@ -182,22 +185,24 @@
     <section class="kpis">
       <div class="kpi">
         <span class="kpi__label">Всего запросов</span>
-        <span class="kpi__value">{{ fmtNum(k.total) }}</span>
+        <span class="kpi__value"><app-count [value]="k.total" /></span>
         <span class="kpi__sub">≈ {{ fmtNum(k.perHour) }}/час</span>
+        <app-sparkline [points]="tsTotals()" color="#6366f1" />
       </div>
       <div class="kpi kpi--err">
         <span class="kpi__label">Ошибки</span>
-        <span class="kpi__value">{{ fmtNum(k.errors) }}</span>
+        <span class="kpi__value"><app-count [value]="k.errors" /></span>
         <span class="kpi__sub">{{ fmtPct(k.errorRate) }} от всех</span>
+        <app-sparkline [points]="tsErrors()" color="#fb7185" />
       </div>
       <div class="kpi kpi--ok">
         <span class="kpi__label">Успешные (2xx)</span>
-        <span class="kpi__value">{{ fmtPct(k.successRate) }}</span>
+        <span class="kpi__value"><app-count [value]="k.successRate" kind="pct" /></span>
         <span class="kpi__sub">{{ fmtNum(k.warnings) }} предупр.</span>
       </div>
       <div class="kpi">
         <span class="kpi__label">Уник. IP</span>
-        <span class="kpi__value">{{ fmtNum(k.uniqueIps) }}</span>
+        <span class="kpi__value"><app-count [value]="k.uniqueIps" /></span>
         <span class="kpi__sub">{{ fmtNum(k.uniqueEndpoints) }} эндпоинтов</span>
       </div>
       <div class="kpi kpi--wide">
@@ -206,6 +211,18 @@
         <span class="kpi__sub">→ {{ fmtDate(k.to) }}</span>
       </div>
     </section>
+
+    <!-- ===== Auto-insights ===== -->
+    @if (data.insights().length) {
+      <section class="insights">
+        @for (ins of data.insights(); track ins.text) {
+          <div class="insight insight--{{ ins.tone }}">
+            <span class="insight__icon">{{ ins.icon }}</span>
+            <span>{{ ins.text }}</span>
+          </div>
+        }
+      </section>
+    }
 
     @if (editMode()) {
       <div class="edit-hint">
@@ -416,6 +433,9 @@
           <button class="btn btn--ghost" (click)="focusStep(-1)" title="Предыдущий (←)">‹ Назад</button>
           <span class="focus__title">{{ widgetTitle(fkey) }} <em>{{ focusPos() }}</em></span>
           <div class="focus__right">
+            @if (canExportPng()) {
+              <button class="btn btn--ghost" (click)="exportPng()" title="Скачать PNG">⬇ PNG</button>
+            }
             <button class="btn btn--ghost" (click)="focusStep(1)" title="Следующий (→)">Вперёд ›</button>
             <button class="btn btn--icon" (click)="closeFocus()" title="Закрыть (Esc)">✕</button>
           </div>
@@ -495,5 +515,9 @@
         </div>
       </footer>
     </section>
+  }
+
+  @if (toast()) {
+    <div class="toast">{{ toast() }}</div>
   }
 </div>

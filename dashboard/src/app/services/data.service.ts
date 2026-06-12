@@ -294,6 +294,66 @@ export class DataService {
     return { bucketMin: bm, cols, colLabels, timeLabels, rows, min, max, grandTotal };
   });
 
+  // --- Auto-insights -------------------------------------------------------
+  readonly insights = computed<{ icon: string; tone: 'good' | 'warn' | 'bad' | 'info'; text: string }[]>(() => {
+    const rows = this.filtered();
+    const out: { icon: string; tone: 'good' | 'warn' | 'bad' | 'info'; text: string }[] = [];
+    if (!rows.length) return out;
+    const k = this.kpis();
+    const f = (n: number) => Math.round(n).toLocaleString('ru-RU');
+
+    if (k.total) {
+      if (k.errorRate < 1)
+        out.push({ icon: '✅', tone: 'good', text: `Сервис стабилен: ошибок ${k.errorRate.toFixed(2)}% (${f(k.errors)} из ${f(k.total)})` });
+      else if (k.errorRate > 5)
+        out.push({ icon: '🔥', tone: 'bad', text: `Высокая доля ошибок: ${k.errorRate.toFixed(1)}% (${f(k.errors)})` });
+      else out.push({ icon: 'ℹ️', tone: 'info', text: `Доля ошибок ${k.errorRate.toFixed(1)}% (${f(k.errors)})` });
+    }
+
+    const hm = this.heatmap();
+    if (hm.max > 0) {
+      let bd = 0, bc = 0, bv = -1;
+      hm.rows.forEach((r) => r.cells.forEach((v, c) => { if (v > bv) { bv = v; bd = r.day; bc = c; } }));
+      out.push({ icon: '⏰', tone: 'info', text: `Пик нагрузки: ${DAY_LABELS[bd]} ~${hm.timeLabels[bc]} (${f(bv)} запр.)` });
+    }
+
+    const src = this.bySource();
+    if (src.length && src[0].key !== '—') {
+      const top = src[0];
+      const share = k.total ? (top.count / k.total) * 100 : 0;
+      out.push({ icon: '👤', tone: 'info', text: `Активнее всех: ${this.sourceLabel(top.key)} — ${share.toFixed(0)}% (${f(top.count)})` });
+    }
+
+    const errIp = new Map<string, number>();
+    const errEp = new Map<string, number>();
+    for (const r of rows) {
+      if (!r.isError) continue;
+      errIp.set(r.ip, (errIp.get(r.ip) || 0) + 1);
+      errEp.set(r.nrDic, (errEp.get(r.nrDic) || 0) + 1);
+    }
+    if (errIp.size) {
+      const [ip, cnt] = [...errIp.entries()].sort((a, b) => b[1] - a[1])[0];
+      out.push({ icon: '🐞', tone: 'warn', text: `Больше всего ошибок от ${this.sourceLabel(ip)} — ${f(cnt)}` });
+    }
+    if (errEp.size) {
+      const [ep, cnt] = [...errEp.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (ep !== '—') out.push({ icon: '🎯', tone: 'warn', text: `Чаще всего ошибается эндпоинт ${ep} — ${f(cnt)}` });
+    }
+
+    const ts = this.timeSeries();
+    if (ts.length >= 4) {
+      const totals = ts.map((b) => b.total);
+      const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
+      const sd = Math.sqrt(totals.reduce((a, b) => a + (b - mean) ** 2, 0) / totals.length);
+      let mi = -1, mv = -1;
+      totals.forEach((v, i) => { if (v > mv) { mv = v; mi = i; } });
+      if (sd > 0 && mv > mean + 3 * sd)
+        out.push({ icon: '📈', tone: 'warn', text: `Всплеск ${ts[mi].label}: ${f(mv)} (≈×${(mv / mean).toFixed(1)} от среднего)` });
+    }
+
+    return out;
+  });
+
   resolveName(ip: string): string {
     return this.members().get(ip) || '';
   }

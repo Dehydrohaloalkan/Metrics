@@ -15,15 +15,25 @@ import { ThemeService } from './services/theme.service';
 import { SettingsService } from './services/settings.service';
 import { ChartPanelComponent } from './components/chart-panel.component';
 import { HeatmapComponent } from './components/heatmap.component';
+import { CountComponent } from './components/count.component';
+import { SparklineComponent } from './components/sparkline.component';
 import { LogRow } from './models';
 
 type SortKey = 'date' | 'level' | 'service' | 'nrDic' | 'httpCode' | 'ip';
+type CrossKind = 'level' | 'status' | 'endpoint' | 'service' | 'ip' | 'text';
 
 @Component({
   selector: 'app-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, NgTemplateOutlet, ChartPanelComponent, HeatmapComponent],
+  imports: [
+    FormsModule,
+    NgTemplateOutlet,
+    ChartPanelComponent,
+    HeatmapComponent,
+    CountComponent,
+    SparklineComponent,
+  ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -132,6 +142,29 @@ export class App implements OnInit {
     this.fsHeight.set(Math.max(320, window.innerHeight - 170));
   }
 
+  /** A canvas exists to export (heatmap card view is plain DOM). */
+  canExportPng(): boolean {
+    const k = this.focusedWidget();
+    if (!k) return false;
+    return !(k === 'heatmap' && this.activityView() === 'heatmap');
+  }
+
+  exportPng(): void {
+    const c = document.querySelector('.focus__body canvas') as HTMLCanvasElement | null;
+    if (!c) return;
+    const a = document.createElement('a');
+    a.href = c.toDataURL('image/png');
+    a.download = (this.focusedWidget() || 'chart') + '.png';
+    a.click();
+  }
+
+  async exportPdf(): Promise<void> {
+    const api = (window as unknown as { metricsAPI?: { exportPdf?: () => Promise<{ ok?: boolean }> } }).metricsAPI;
+    if (!api?.exportPdf) return;
+    const res = await api.exportPdf();
+    if (res?.ok) this.showToast('PDF сохранён');
+  }
+
   @HostListener('window:resize')
   onResize(): void {
     if (this.focusedWidget()) this.updateFsHeight();
@@ -196,9 +229,74 @@ export class App implements OnInit {
   private textTimer: ReturnType<typeof setTimeout> | undefined;
   private ipTimer: ReturnType<typeof setTimeout> | undefined;
 
+  // toast (e.g. data auto-reloaded)
+  readonly toast = signal<string | null>(null);
+  private toastTimer: ReturnType<typeof setTimeout> | undefined;
+
   ngOnInit(): void {
     this.data.loadMembers();
     this.data.loadDefault();
+    const api = (window as unknown as { metricsAPI?: { onDataChanged?: (cb: () => void) => void } }).metricsAPI;
+    api?.onDataChanged?.(() => {
+      this.data.loadMembers();
+      this.data.loadDefault();
+      this.showToast('Данные обновлены');
+    });
+  }
+
+  showToast(msg: string): void {
+    this.toast.set(msg);
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.toast.set(null), 2600);
+  }
+
+  // ---- cross-filtering: click a chart element to filter the dashboard ----
+  crossFilter(kind: CrossKind, value: string): void {
+    if (!value || value === 'прочие' || value === '—') return;
+    switch (kind) {
+      case 'level':
+        this.data.toggleSet(this.data.levels, value);
+        break;
+      case 'status':
+        this.data.toggleSet(this.data.statusClasses, value);
+        break;
+      case 'endpoint':
+        this.data.toggleSet(this.data.endpoints, value);
+        break;
+      case 'service':
+        this.data.service.set(this.data.service() === value ? '' : value);
+        break;
+      case 'ip': {
+        const nv = this.data.ipQuery() === value ? '' : value;
+        this.data.ipQuery.set(nv);
+        this.ipInput.set(nv);
+        break;
+      }
+      case 'text': {
+        const nv = this.data.textQuery() === value ? '' : value;
+        this.data.textQuery.set(nv);
+        this.textInput.set(nv);
+        break;
+      }
+    }
+    this.page.set(0);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private clickable(options: any, keys: () => string[], kind: CrossKind): any {
+    return {
+      ...options,
+      onClick: (_e: unknown, els: { index: number }[]) => {
+        if (els.length) {
+          const k = keys()[els[0].index];
+          if (k != null) this.crossFilter(kind, k);
+        }
+      },
+      onHover: (e: { native?: { target?: HTMLElement } }, els: unknown[]) => {
+        const t = e?.native?.target;
+        if (t) t.style.cursor = els.length ? 'pointer' : 'default';
+      },
+    };
   }
 
   // ---- date input bindings (string <-> epoch) ----
@@ -385,7 +483,7 @@ export class App implements OnInit {
           },
         ],
       },
-      options: this.doughnutOptions(p),
+      options: this.clickable(this.doughnutOptions(p), () => items.map((i) => i.key), 'level'),
     };
   });
 
@@ -407,7 +505,7 @@ export class App implements OnInit {
           },
         ],
       },
-      options: this.barOptions(p),
+      options: this.clickable(this.barOptions(p), () => items.map((i) => i.key), 'status'),
     };
   });
 
@@ -433,15 +531,21 @@ export class App implements OnInit {
     };
   });
 
-  readonly endpointsConfig = computed<ChartConfiguration<'bar'>>(() =>
-    this.hbarConfig(this.data.topEndpoints(), 'Запросы'),
-  );
-  readonly ipsConfig = computed<ChartConfiguration<'bar'>>(() =>
-    this.hbarConfig(
-      this.data.topIps().map((i) => ({ key: this.data.sourceLabel(i.key), count: i.count })),
+  readonly endpointsConfig = computed<ChartConfiguration<'bar'>>(() => {
+    const raw = this.data.topEndpoints();
+    const cfg = this.hbarConfig(raw, 'Запросы');
+    cfg.options = this.clickable(cfg.options, () => raw.map((i) => i.key), 'endpoint');
+    return cfg;
+  });
+  readonly ipsConfig = computed<ChartConfiguration<'bar'>>(() => {
+    const raw = this.data.topIps();
+    const cfg = this.hbarConfig(
+      raw.map((i) => ({ key: this.data.sourceLabel(i.key), count: i.count })),
       'Запросы',
-    ),
-  );
+    );
+    cfg.options = this.clickable(cfg.options, () => raw.map((i) => i.key), 'ip');
+    return cfg;
+  });
 
   readonly sourcePieLimit = signal(10);
   readonly endpointPieLimit = signal(10);
@@ -454,13 +558,20 @@ export class App implements OnInit {
     ),
   );
   readonly endpointPieConfig = computed<ChartConfiguration<'doughnut'>>(() =>
-    this.doughnutFrom(this.data.byEndpoint(), this.endpointPieLimit()),
+    this.doughnutFrom(this.data.byEndpoint(), this.endpointPieLimit(), 'endpoint'),
   );
   readonly sourceEndpointsConfig = computed<ChartConfiguration<'bar'>>(() =>
     this.hbarConfig(this.data.sourceEndpoints(), 'Запросы'),
   );
   readonly sourceTotal = computed(() => this.data.sourceEndpoints().reduce((s, i) => s + i.count, 0));
-  readonly urlsConfig = computed<ChartConfiguration<'bar'>>(() => this.hbarConfig(this.data.topUrls(), 'Запросы'));
+  readonly tsTotals = computed(() => this.data.timeSeries().map((b) => b.total));
+  readonly tsErrors = computed(() => this.data.timeSeries().map((b) => b.errors));
+  readonly urlsConfig = computed<ChartConfiguration<'bar'>>(() => {
+    const raw = this.data.topUrls();
+    const cfg = this.hbarConfig(raw, 'Запросы');
+    cfg.options = this.clickable(cfg.options, () => raw.map((i) => i.key), 'text');
+    return cfg;
+  });
   // Activity: overlay one line per weekday over the time-of-day axis.
   readonly activityView = signal<'overlay' | 'heatmap'>(this.settings.get('activityView', 'overlay'));
   readonly activityDays = signal<'all' | 'weekdays' | 'weekend'>(this.settings.get('activityDays', 'all'));
@@ -541,7 +652,7 @@ export class App implements OnInit {
           },
         ],
       },
-      options: this.doughnutOptions(p),
+      options: this.clickable(this.doughnutOptions(p), () => items.map((i) => i.key), 'service'),
     };
   });
 
@@ -575,7 +686,11 @@ export class App implements OnInit {
   }
 
   /** Doughnut from a counted list: top N slices + an aggregated "прочие". */
-  private doughnutFrom(items: { key: string; count: number }[], limit = 8): ChartConfiguration<'doughnut'> {
+  private doughnutFrom(
+    items: { key: string; count: number }[],
+    limit = 8,
+    pickKind?: CrossKind,
+  ): ChartConfiguration<'doughnut'> {
     const p = this.themeSvc.palette();
     const TOP = limit > 0 ? limit : items.length;
     let slices = items;
@@ -600,7 +715,9 @@ export class App implements OnInit {
           },
         ],
       },
-      options: this.doughnutOptions(p),
+      options: pickKind
+        ? this.clickable(this.doughnutOptions(p), () => slices.map((s) => s.key), pickKind)
+        : this.doughnutOptions(p),
     };
   }
 
@@ -608,6 +725,7 @@ export class App implements OnInit {
     return {
       responsive: true,
       maintainAspectRatio: false,
+      animation: { duration: 650, easing: 'easeOutQuart' },
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { labels: { color: p.text, usePointStyle: true, boxWidth: 8 } },
@@ -627,6 +745,7 @@ export class App implements OnInit {
     return {
       responsive: true,
       maintainAspectRatio: false,
+      animation: { duration: 650, easing: 'easeOutQuart' },
       plugins: { legend: { display: false }, tooltip: this.tooltipStyle(p) },
       scales: {
         x: { beginAtZero: true, ticks: { color: p.textMuted, precision: 0 }, grid: { color: p.grid } },
@@ -640,6 +759,7 @@ export class App implements OnInit {
       responsive: true,
       maintainAspectRatio: false,
       cutout: '62%',
+      animation: { duration: 700, easing: 'easeOutQuart', animateRotate: true, animateScale: true },
       plugins: {
         legend: {
           position: 'right',

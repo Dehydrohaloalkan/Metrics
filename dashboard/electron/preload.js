@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld('metricsAPI', {
   pickFile: () => ipcRenderer.invoke('csv:pick'),
   loadSettings: () => ipcRenderer.sendSync('settings:get'),
   saveSettings: (data) => ipcRenderer.invoke('settings:set', data),
+  onDataChanged: (cb) => ipcRenderer.on('data:changed', () => cb()),
+  exportPdf: () => ipcRenderer.invoke('export:pdf'),
 });

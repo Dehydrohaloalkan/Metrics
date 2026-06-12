@@ -4,6 +4,27 @@ const fs = require('fs');
 
 const isDev = !app.isPackaged || process.env.ELECTRON_DEV === '1';
 
+let mainWindow = null;
+let watchedCsvPath = null;
+
+/** Watch the active data.csv and notify the renderer when it changes. */
+function watchCsv(filePath) {
+  if (!filePath || filePath === watchedCsvPath) return;
+  if (watchedCsvPath) {
+    try {
+      fs.unwatchFile(watchedCsvPath);
+    } catch {
+      /* ignore */
+    }
+  }
+  watchedCsvPath = filePath;
+  fs.watchFile(filePath, { interval: 1500 }, (cur, prev) => {
+    if (cur.mtimeMs !== prev.mtimeMs && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('data:changed');
+    }
+  });
+}
+
 /**
  * Returns candidate locations for a named data file (e.g. data.csv,
  * members.csv), ordered by priority. The first existing one wins.
@@ -74,6 +95,7 @@ function createWindow() {
     },
   });
 
+  mainWindow = win;
   win.once('ready-to-show', () => win.show());
 
   // Open external links in the OS browser, not inside the app.
@@ -91,7 +113,33 @@ function createWindow() {
 }
 
 // --- IPC: load the default data.csv discovered next to the exe / bundled ---
-ipcMain.handle('csv:loadDefault', async () => loadNamedFile('data.csv'));
+ipcMain.handle('csv:loadDefault', async () => {
+  const res = loadNamedFile('data.csv');
+  if (res.ok && res.path) watchCsv(res.path);
+  return res;
+});
+
+// --- IPC: export the whole dashboard to PDF ---
+ipcMain.handle('export:pdf', async () => {
+  if (!mainWindow) return { ok: false };
+  try {
+    const data = await mainWindow.webContents.printToPDF({
+      printBackground: true,
+      landscape: true,
+      pageSize: 'A4',
+    });
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: 'Сохранить отчёт',
+      defaultPath: 'metrics-report.pdf',
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+    fs.writeFileSync(res.filePath, data);
+    return { ok: true, path: res.filePath };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
 
 // --- IPC: load members.csv (ip -> name mapping) ---
 ipcMain.handle('members:loadDefault', async () => loadNamedFile('members.csv'));
