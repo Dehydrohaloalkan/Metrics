@@ -32,6 +32,17 @@
     </div>
   </header>
 
+  @if (data.loading()) {
+    <div class="overlay">
+      <div class="overlay__card">
+        <div class="spinner"></div>
+        <div class="overlay__phase">{{ data.progress()?.phase || 'Загрузка…' }}</div>
+        <div class="bar"><div class="bar__fill" [style.width.%]="(data.progress()?.pct || 0) * 100"></div></div>
+        <div class="overlay__hint">Большие файлы (сотни МБ) разбираются по частям — интерфейс не зависнет.</div>
+      </div>
+    </div>
+  }
+
   @if (!data.rows().length) {
     <!-- ===== Empty / status state ===== -->
     <div class="empty">
@@ -200,9 +211,9 @@
                        [config]="timeSeriesConfig()" [height]="300"
                        [empty]="!data.timeSeries().length">
         <div panelActions class="seg">
-          @for (g of ['auto','hour','day','month']; track g) {
-            <button class="seg__btn" [class.seg__btn--on]="data.granularity() === g"
-                    (click)="setGranularity($any(g))">{{ g === 'auto' ? 'авто' : g === 'hour' ? 'час' : g === 'day' ? 'день' : 'мес' }}</button>
+          @for (g of granularities; track g.key) {
+            <button class="seg__btn" [class.seg__btn--on]="data.granularity() === g.key"
+                    (click)="setGranularity(g.key)">{{ g.label }}</button>
           }
         </div>
       </app-chart-panel>
@@ -210,10 +221,38 @@
       <app-chart-panel title="Уровни логов" [config]="levelConfig()" [empty]="!data.byLevel().length" />
       <app-chart-panel title="Классы HTTP-статусов" [config]="statusClassConfig()" [empty]="!data.byStatusClass().length" />
 
-      <app-chart-panel title="Топ эндпоинтов (nr_dic)" [config]="endpointsConfig()" [height]="300" [empty]="!data.topEndpoints().length" />
-      <app-chart-panel title="Топ источников (IP)" [config]="ipsConfig()" [height]="300" [empty]="!data.topIps().length" />
+      <app-chart-panel title="Топ эндпоинтов (nr_dic)" [config]="endpointsConfig()"
+                       [height]="barHeight(data.topEndpoints().length)" [bodyMaxHeight]="420"
+                       [empty]="!data.topEndpoints().length">
+        <div panelActions class="seg">
+          @for (n of limitOptions; track n) {
+            <button class="seg__btn" [class.seg__btn--on]="data.endpointsLimit() === n"
+                    (click)="data.endpointsLimit.set(n)">{{ limitLabel(n) }}</button>
+          }
+        </div>
+      </app-chart-panel>
 
-      <app-chart-panel title="Топ URL" [config]="urlsConfig()" [height]="300" [empty]="!data.topUrls().length" />
+      <app-chart-panel title="Топ источников (IP)" [config]="ipsConfig()"
+                       [height]="barHeight(data.topIps().length)" [bodyMaxHeight]="420"
+                       [empty]="!data.topIps().length">
+        <div panelActions class="seg">
+          @for (n of limitOptions; track n) {
+            <button class="seg__btn" [class.seg__btn--on]="data.ipsLimit() === n"
+                    (click)="data.ipsLimit.set(n)">{{ limitLabel(n) }}</button>
+          }
+        </div>
+      </app-chart-panel>
+
+      <app-chart-panel class="span-2" title="Топ URL (путь без хвостового /)" [config]="urlsConfig()"
+                       [height]="barHeight(data.topUrls().length)" [bodyMaxHeight]="460"
+                       [empty]="!data.topUrls().length">
+        <div panelActions class="seg">
+          @for (n of limitOptions; track n) {
+            <button class="seg__btn" [class.seg__btn--on]="data.urlsLimit() === n"
+                    (click)="data.urlsLimit.set(n)">{{ limitLabel(n) }}</button>
+          }
+        </div>
+      </app-chart-panel>
       @if (data.topHttpCodes().length > 1) {
         <app-chart-panel title="HTTP-коды" [config]="httpCodesConfig()" [empty]="!data.topHttpCodes().length" />
       }

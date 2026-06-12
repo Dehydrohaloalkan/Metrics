@@ -27,11 +27,17 @@ Chart.register(...registerables);
         </div>
         <ng-content select="[panelActions]"></ng-content>
       </header>
-      <div class="panel__body" [style.height.px]="height()">
+      <div
+        class="panel__body"
+        [style.maxHeight.px]="bodyMaxHeight() || null"
+        [style.overflowY]="bodyMaxHeight() ? 'auto' : 'visible'"
+      >
         @if (empty()) {
-          <div class="panel__empty">Нет данных для отображения</div>
+          <div class="panel__empty" [style.height.px]="height()">Нет данных для отображения</div>
         }
-        <canvas #canvas [style.display]="empty() ? 'none' : 'block'"></canvas>
+        <div class="panel__canvas" [style.height.px]="height()" [style.display]="empty() ? 'none' : 'block'">
+          <canvas #canvas></canvas>
+        </div>
       </div>
     </section>
   `,
@@ -70,6 +76,10 @@ Chart.register(...registerables);
         position: relative;
         width: 100%;
       }
+      .panel__canvas {
+        position: relative;
+        width: 100%;
+      }
       .panel__empty {
         position: absolute;
         inset: 0;
@@ -85,6 +95,7 @@ export class ChartPanelComponent implements AfterViewInit, OnDestroy {
   readonly title = input<string>('');
   readonly subtitle = input<string>('');
   readonly height = input<number>(260);
+  readonly bodyMaxHeight = input<number>(0);
   readonly config = input.required<ChartConfiguration<any>>();
   readonly empty = input<boolean>(false);
 

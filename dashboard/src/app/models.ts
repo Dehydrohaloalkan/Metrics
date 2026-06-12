@@ -49,13 +49,17 @@ function statusClassOf(code: number): string {
   return '5xx';
 }
 
+function stripTrailingSlash(p: string): string {
+  return p.length > 1 ? p.replace(/\/+$/, '') || '/' : p;
+}
+
 function pathOf(url: string): string {
   if (!url) return '';
   try {
-    return new URL(url).pathname || url;
+    return stripTrailingSlash(new URL(url).pathname || url);
   } catch {
     const m = url.match(/^[a-z]+:\/\/[^/]+(\/.*)$/i);
-    return m ? m[1] : url;
+    return stripTrailingSlash(m ? m[1] : url);
   }
 }
 

@@ -1,6 +1,7 @@
 import { Injectable, computed, signal } from '@angular/core';
 import Papa from 'papaparse';
-import { LogRow, SourceInfo, toLogRow, ERROR_LEVELS, WARN_LEVELS } from '../models';
+import { LogRow, SourceInfo, ERROR_LEVELS, WARN_LEVELS } from '../models';
+import { parseCsvStream } from '../csv-stream';
 
 declare global {
   interface Window {
@@ -12,7 +13,8 @@ declare global {
   }
 }
 
-export type Granularity = 'auto' | 'hour' | 'day' | 'month';
+export type Granularity = 'auto' | 'second' | 'minute' | 'hour' | 'day' | 'week' | 'month';
+export type EffectiveGranularity = Exclude<Granularity, 'auto'>;
 
 export interface Bucket {
   label: string;
@@ -31,8 +33,14 @@ export class DataService {
   readonly rows = signal<LogRow[]>([]);
   readonly source = signal<SourceInfo | null>(null);
   readonly loading = signal(false);
+  readonly progress = signal<{ phase: string; pct: number } | null>(null);
   readonly status = signal<string>('');
   readonly isElectron = !!window.metricsAPI?.isElectron;
+
+  // how many bars to show in the "top N" charts (0 = all)
+  readonly endpointsLimit = signal(15);
+  readonly ipsLimit = signal(15);
+  readonly urlsLimit = signal(15);
 
   // --- Filter state ---------------------------------------------------------
   readonly dateFrom = signal<number | null>(null);
@@ -149,14 +157,18 @@ export class DataService {
   });
 
   // --- Aggregations for charts ---------------------------------------------
-  readonly effectiveGranularity = computed<'hour' | 'day' | 'month'>(() => {
+  readonly effectiveGranularity = computed<EffectiveGranularity>(() => {
     const g = this.granularity();
     if (g !== 'auto') return g;
     const k = this.kpis();
     if (k.from == null || k.to == null) return 'day';
-    const days = (k.to - k.from) / 864e5;
-    if (days <= 3) return 'hour';
-    if (days <= 120) return 'day';
+    const ms = k.to - k.from;
+    const min = 60e3;
+    if (ms <= 2 * min) return 'second';
+    if (ms <= 180 * min) return 'minute';
+    if (ms <= 3 * 864e5) return 'hour';
+    if (ms <= 120 * 864e5) return 'day';
+    if (ms <= 730 * 864e5) return 'week';
     return 'month';
   });
 
@@ -182,9 +194,9 @@ export class DataService {
     this.countBy((r) => r.statusClass).sort((a, b) => a.key.localeCompare(b.key)),
   );
   readonly byService = computed<Counted[]>(() => this.countBy((r) => r.service));
-  readonly topEndpoints = computed<Counted[]>(() => this.countBy((r) => r.nrDic).slice(0, 12));
-  readonly topUrls = computed<Counted[]>(() => this.countBy((r) => r.urlPath || r.url).slice(0, 12));
-  readonly topIps = computed<Counted[]>(() => this.countBy((r) => r.ip).slice(0, 12));
+  readonly topEndpoints = computed<Counted[]>(() => this.limited(this.countBy((r) => r.nrDic), this.endpointsLimit()));
+  readonly topUrls = computed<Counted[]>(() => this.limited(this.countBy((r) => r.urlPath || r.url), this.urlsLimit()));
+  readonly topIps = computed<Counted[]>(() => this.limited(this.countBy((r) => r.ip), this.ipsLimit()));
   readonly topExceptions = computed<Counted[]>(() =>
     this.countBy((r) => this.shortException(r.exception), (r) => !!r.exception).slice(0, 10),
   );
@@ -199,7 +211,7 @@ export class DataService {
       try {
         const res = await window.metricsAPI.loadDefault();
         if (res.ok && res.content != null) {
-          this.ingest(res.content, this.baseName(res.path) || 'data.csv', res.path || '');
+          await this.ingest(res.content, this.baseName(res.path) || 'data.csv', res.path || '');
         } else {
           this.status.set(res.error || 'Не удалось найти data.csv рядом с приложением.');
         }
@@ -215,7 +227,7 @@ export class DataService {
       const resp = await fetch('data.csv');
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const text = await resp.text();
-      this.ingest(text, 'data.csv', 'public/data.csv');
+      await this.ingest(text, 'data.csv', 'public/data.csv');
     } catch (e) {
       this.status.set('Не удалось загрузить data.csv: ' + String(e));
     } finally {
@@ -233,7 +245,7 @@ export class DataService {
       const res = await window.metricsAPI.pickFile();
       if (res.canceled) return;
       if (res.ok && res.content != null) {
-        this.ingest(res.content, this.baseName(res.path) || 'csv', res.path || '');
+        await this.ingest(res.content, this.baseName(res.path) || 'csv', res.path || '');
       } else {
         this.status.set(res.error || 'Не удалось прочитать файл.');
       }
@@ -242,25 +254,28 @@ export class DataService {
     }
   }
 
-  ingestText(text: string, name: string): void {
-    this.ingest(text, name, name);
+  async ingestText(text: string, name: string): Promise<void> {
+    await this.ingest(text, name, name);
   }
 
-  private ingest(text: string, name: string, path: string): void {
-    const parsed = Papa.parse<Record<string, string>>(text, {
-      header: true,
-      skipEmptyLines: 'greedy',
-      transformHeader: (h) => h.trim().replace(/^"|"$/g, ''),
-    });
-    const rows = (parsed.data || [])
-      .filter((r) => r && Object.keys(r).length > 0)
-      .map(toLogRow)
-      .filter((r) => r.id || r.dateRaw || r.message);
-
-    this.rows.set(rows);
-    this.source.set({ name, path, rows: rows.length });
-    this.status.set(rows.length ? '' : 'Файл загружен, но строк не найдено.');
-    this.resetFilters();
+  private async ingest(text: string, name: string, path: string): Promise<void> {
+    this.loading.set(true);
+    this.progress.set({ phase: 'Разбор CSV…', pct: 0 });
+    // Let the loading overlay paint before the heavy work starts.
+    await new Promise((r) => setTimeout(r));
+    try {
+      const rows = await parseCsvStream(text, (pct, count) => {
+        this.progress.set({ phase: `Разбор строк: ${count.toLocaleString('ru-RU')}`, pct });
+      });
+      this.progress.set({ phase: 'Готово', pct: 1 });
+      this.rows.set(rows);
+      this.source.set({ name, path, rows: rows.length });
+      this.status.set(rows.length ? '' : 'Файл загружен, но строк не найдено.');
+      this.resetFilters();
+    } finally {
+      this.loading.set(false);
+      this.progress.set(null);
+    }
   }
 
   resetFilters(): void {
@@ -331,22 +346,49 @@ export class DataService {
     return [...map.values()].sort((a, b) => b.count - a.count);
   }
 
-  private bucketKey(d: Date, g: 'hour' | 'day' | 'month'): number {
+  private limited<T>(arr: T[], limit: number): T[] {
+    return limit > 0 ? arr.slice(0, limit) : arr;
+  }
+
+  private bucketKey(d: Date, g: EffectiveGranularity): number {
     const x = new Date(d);
-    x.setMinutes(0, 0, 0);
+    if (g === 'second') {
+      x.setMilliseconds(0);
+      return x.getTime();
+    }
+    x.setSeconds(0, 0);
+    if (g === 'minute') return x.getTime();
+    x.setMinutes(0);
     if (g === 'hour') return x.getTime();
     x.setHours(0);
     if (g === 'day') return x.getTime();
+    if (g === 'week') {
+      const dow = (x.getDay() + 6) % 7; // Monday = 0
+      x.setDate(x.getDate() - dow);
+      return x.getTime();
+    }
     x.setDate(1);
     return x.getTime();
   }
 
-  private bucketLabel(key: number, g: 'hour' | 'day' | 'month'): string {
+  private bucketLabel(key: number, g: EffectiveGranularity): string {
     const d = new Date(key);
     const p = (n: number) => String(n).padStart(2, '0');
-    if (g === 'hour') return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:00`;
-    if (g === 'day') return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
-    return `${p(d.getMonth() + 1)}.${d.getFullYear()}`;
+    const dm = `${p(d.getDate())}.${p(d.getMonth() + 1)}`;
+    switch (g) {
+      case 'second':
+        return `${dm} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+      case 'minute':
+        return `${dm} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      case 'hour':
+        return `${dm} ${p(d.getHours())}:00`;
+      case 'day':
+        return `${dm}.${d.getFullYear()}`;
+      case 'week':
+        return `нед ${dm}`;
+      default:
+        return `${p(d.getMonth() + 1)}.${d.getFullYear()}`;
+    }
   }
 
   private shortException(ex: string): string {

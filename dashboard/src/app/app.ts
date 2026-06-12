@@ -211,6 +211,7 @@ export class App implements OnInit {
             backgroundColor: items.map((i) => this.statusColor(i.key, p)),
             borderRadius: 6,
             maxBarThickness: 64,
+            minBarLength: 3,
           },
         ],
       },
@@ -232,6 +233,7 @@ export class App implements OnInit {
             backgroundColor: items.map((i) => this.statusColor((i.key[0] ?? '') + 'xx', p)),
             borderRadius: 6,
             maxBarThickness: 48,
+            minBarLength: 3,
           },
         ],
       },
@@ -283,6 +285,7 @@ export class App implements OnInit {
             backgroundColor: danger ? p.series[5] : p.accent,
             borderRadius: 6,
             maxBarThickness: 26,
+            minBarLength: 4,
           },
         ],
       },
@@ -394,6 +397,27 @@ export class App implements OnInit {
   }
 
   // ===================== formatting & misc =====================
+  readonly granularities: { key: Granularity; label: string }[] = [
+    { key: 'auto', label: 'авто' },
+    { key: 'second', label: 'сек' },
+    { key: 'minute', label: 'мин' },
+    { key: 'hour', label: 'час' },
+    { key: 'day', label: 'день' },
+    { key: 'week', label: 'нед' },
+    { key: 'month', label: 'мес' },
+  ];
+
+  readonly limitOptions = [15, 50, 100, 0]; // 0 = все
+
+  limitLabel(n: number): string {
+    return n === 0 ? 'Все' : String(n);
+  }
+
+  /** Height for a horizontal "top" chart so every bar stays readable. */
+  barHeight(n: number): number {
+    return Math.max(220, n * 26 + 56);
+  }
+
   setGranularity(g: Granularity): void {
     this.data.granularity.set(g);
   }
