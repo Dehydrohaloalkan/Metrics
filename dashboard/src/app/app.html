@@ -42,7 +42,6 @@
         <div class="spinner"></div>
         <div class="overlay__phase">{{ data.progress()?.phase || 'Загрузка…' }}</div>
         <div class="bar"><div class="bar__fill" [style.width.%]="(data.progress()?.pct || 0) * 100"></div></div>
-        <div class="overlay__hint">Большие файлы (сотни МБ) разбираются по частям — интерфейс не зависнет.</div>
       </div>
     </div>
   }
@@ -356,7 +355,6 @@
         @case ('heatmap') {
           @if (activityView() === 'overlay') {
             <app-chart-panel title="Активность по времени суток"
-                             subtitle="наложение по дням недели — пики в одно и то же время"
                              [config]="activityOverlayConfig()" [height]="fs ? fsHeight() : 330"
                              [empty]="!data.heatmap().grandTotal"
                              [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
@@ -383,7 +381,6 @@
               <header class="panel__head">
                 <div>
                   <h3>Активность по дням недели и времени</h3>
-                  <p class="muted">все дни наложены по дню недели — видно, в какие часы/минуты пик</p>
                 </div>
                 <div class="panel__tools">
                   <div class="acts">
