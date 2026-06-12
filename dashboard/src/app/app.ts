@@ -31,6 +31,7 @@ export class App implements OnInit {
   readonly filtersOpen = signal(true);
 
   ngOnInit(): void {
+    this.data.loadMembers();
     this.data.loadDefault();
   }
 
@@ -244,7 +245,23 @@ export class App implements OnInit {
   readonly endpointsConfig = computed<ChartConfiguration<'bar'>>(() =>
     this.hbarConfig(this.data.topEndpoints(), 'Запросы'),
   );
-  readonly ipsConfig = computed<ChartConfiguration<'bar'>>(() => this.hbarConfig(this.data.topIps(), 'Запросы'));
+  readonly ipsConfig = computed<ChartConfiguration<'bar'>>(() =>
+    this.hbarConfig(
+      this.data.topIps().map((i) => ({ key: this.data.sourceLabel(i.key), count: i.count })),
+      'Запросы',
+    ),
+  );
+
+  readonly sourcePieConfig = computed<ChartConfiguration<'doughnut'>>(() =>
+    this.doughnutFrom(this.data.bySource().map((i) => ({ key: this.data.sourceLabel(i.key), count: i.count }))),
+  );
+  readonly endpointPieConfig = computed<ChartConfiguration<'doughnut'>>(() =>
+    this.doughnutFrom(this.data.byEndpoint()),
+  );
+  readonly sourceEndpointsConfig = computed<ChartConfiguration<'bar'>>(() =>
+    this.hbarConfig(this.data.sourceEndpoints(), 'Запросы'),
+  );
+  readonly sourceTotal = computed(() => this.data.sourceEndpoints().reduce((s, i) => s + i.count, 0));
   readonly urlsConfig = computed<ChartConfiguration<'bar'>>(() => this.hbarConfig(this.data.topUrls(), 'Запросы'));
   readonly serviceConfig = computed<ChartConfiguration<'doughnut'>>(() => {
     const p = this.themeSvc.palette();
@@ -293,6 +310,36 @@ export class App implements OnInit {
         ...this.barOptions(p),
         indexAxis: 'y',
       },
+    };
+  }
+
+  /** Doughnut from a counted list: top 8 slices + an aggregated "прочие". */
+  private doughnutFrom(items: { key: string; count: number }[]): ChartConfiguration<'doughnut'> {
+    const p = this.themeSvc.palette();
+    const TOP = 8;
+    let slices = items;
+    if (items.length > TOP + 1) {
+      const head = items.slice(0, TOP);
+      const rest = items.slice(TOP).reduce((s, i) => s + i.count, 0);
+      slices = [...head, { key: 'прочие', count: rest }];
+    }
+    return {
+      type: 'doughnut',
+      data: {
+        labels: slices.map((s) => s.key),
+        datasets: [
+          {
+            data: slices.map((s) => s.count),
+            backgroundColor: slices.map((s, idx) =>
+              s.key === 'прочие' ? p.textMuted : p.series[idx % p.series.length],
+            ),
+            borderColor: p.surface,
+            borderWidth: 2,
+            hoverOffset: 6,
+          },
+        ],
+      },
+      options: this.doughnutOptions(p),
     };
   }
 
@@ -433,6 +480,11 @@ export class App implements OnInit {
     const d = new Date(ms);
     const p = (n: number) => String(n).padStart(2, '0');
     return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  /** Member name for an ip, or the "unknown user" label. */
+  displaySource(ip: string): string {
+    return this.data.resolveName(ip) || this.data.UNKNOWN;
   }
 
   rowClass(r: LogRow): string {

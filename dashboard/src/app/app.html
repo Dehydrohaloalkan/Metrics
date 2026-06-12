@@ -111,8 +111,8 @@
 
           <!-- ip search -->
           <div class="field">
-            <label>IP источника</label>
-            <input type="text" placeholder="10.3.…"
+            <label>Источник (IP или имя)</label>
+            <input type="text" placeholder="10.3.… или имя"
                    [ngModel]="data.ipQuery()" (ngModelChange)="data.ipQuery.set($event); onFilterChange()" />
           </div>
 
@@ -259,6 +259,31 @@
       @if (data.byService().length > 1) {
         <app-chart-panel title="По сервисам" [config]="serviceConfig()" [empty]="!data.byService().length" />
       }
+
+      <!-- pies -->
+      <app-chart-panel title="Доли по источникам"
+                       subtitle="по запросам (топ-8 + прочие)"
+                       [config]="sourcePieConfig()" [height]="280" [empty]="!data.bySource().length" />
+      <app-chart-panel title="Доли по эндпоинтам"
+                       subtitle="nr_dic (топ-8 + прочие)"
+                       [config]="endpointPieConfig()" [height]="280" [empty]="!data.byEndpoint().length" />
+
+      <!-- drill-down: endpoints per source -->
+      <app-chart-panel class="span-2"
+                       title="Эндпоинты выбранного источника"
+                       [subtitle]="data.sourceEndpoints().length + ' эндпоинтов · ' + fmtNum(sourceTotal())"
+                       [config]="sourceEndpointsConfig()"
+                       [height]="barHeight(data.sourceEndpoints().length)" [bodyMaxHeight]="420"
+                       [empty]="!data.sourceEndpoints().length">
+        <div panelActions class="seg-select">
+          <span class="muted">Источник:</span>
+          <select [ngModel]="data.activeSource()" (ngModelChange)="data.selectedSource.set($event)">
+            @for (s of data.bySource(); track s.key) {
+              <option [value]="s.key">{{ data.sourceLabel(s.key) }} — {{ fmtNum(s.count) }}</option>
+            }
+          </select>
+        </div>
+      </app-chart-panel>
     </section>
 
     <!-- ===== Logs table ===== -->
@@ -276,7 +301,7 @@
               <th class="sortable" (click)="setSort('service')">Сервис {{ sortArrow('service') }}</th>
               <th class="sortable" (click)="setSort('nrDic')">nr_dic {{ sortArrow('nrDic') }}</th>
               <th class="sortable" (click)="setSort('httpCode')">HTTP {{ sortArrow('httpCode') }}</th>
-              <th class="sortable" (click)="setSort('ip')">IP {{ sortArrow('ip') }}</th>
+              <th class="sortable" (click)="setSort('ip')">Источник {{ sortArrow('ip') }}</th>
               <th>Сообщение</th>
             </tr>
           </thead>
@@ -288,7 +313,10 @@
                 <td class="nowrap">{{ r.service }}</td>
                 <td class="nowrap">{{ r.nrDic }}</td>
                 <td><span class="http http--{{ r.statusClass }}">{{ r.httpStatus }}</span></td>
-                <td class="nowrap">{{ r.ip }}</td>
+                <td class="nowrap">
+                  <span class="src-name">{{ displaySource(r.ip) }}</span>
+                  <span class="src-ip">{{ r.ip }}</span>
+                </td>
                 <td class="msg">{{ r.message }}</td>
               </tr>
               @if (expandedId() === (r.id || '' + $index)) {
@@ -296,6 +324,7 @@
                   <td colspan="7">
                     <div class="detail__grid">
                       <div class="detail__full"><span class="detail__k">URL</span><span class="detail__v">{{ r.url || '—' }}</span></div>
+                      <div><span class="detail__k">Источник</span><span class="detail__v">{{ displaySource(r.ip) }} · {{ r.ip }}</span></div>
                       <div><span class="detail__k">nr_dic</span><span class="detail__v">{{ r.nrDic }}</span></div>
                       <div><span class="detail__k">cd_dic_status</span><span class="detail__v">{{ r.dicStatus || '—' }}</span></div>
                       <div><span class="detail__k">HTTP-статус</span><span class="detail__v">{{ r.httpStatus }}</span></div>

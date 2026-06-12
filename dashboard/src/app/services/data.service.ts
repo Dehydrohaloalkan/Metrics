@@ -8,6 +8,7 @@ declare global {
     metricsAPI?: {
       isElectron: boolean;
       loadDefault: () => Promise<{ ok: boolean; path?: string; content?: string; error?: string; canceled?: boolean }>;
+      loadMembers: () => Promise<{ ok: boolean; path?: string; content?: string; error?: string; canceled?: boolean }>;
       pickFile: () => Promise<{ ok: boolean; path?: string; content?: string; error?: string; canceled?: boolean }>;
     };
   }
@@ -31,7 +32,9 @@ export interface Counted {
 @Injectable({ providedIn: 'root' })
 export class DataService {
   readonly rows = signal<LogRow[]>([]);
+  readonly members = signal<Map<string, string>>(new Map()); // ip -> name
   readonly source = signal<SourceInfo | null>(null);
+  readonly UNKNOWN = 'неизвестный пользователь';
   readonly loading = signal(false);
   readonly progress = signal<{ phase: string; pct: number } | null>(null);
   readonly status = signal<string>('');
@@ -88,7 +91,10 @@ export class DataService {
       if (svc && r.service !== svc) return false;
       if (eps.size && !eps.has(r.nrDic)) return false;
       if (onlyErr && !r.isError) return false;
-      if (ip && !r.ip.toLowerCase().includes(ip)) return false;
+      if (ip) {
+        const name = this.resolveName(r.ip).toLowerCase();
+        if (!r.ip.toLowerCase().includes(ip) && !name.includes(ip)) return false;
+      }
       if (text) {
         const hay = (r.message + ' ' + r.url + ' ' + r.exception + ' ' + r.logger + ' ' + r.nrDic).toLowerCase();
         if (!hay.includes(text)) return false;
@@ -194,6 +200,7 @@ export class DataService {
     this.countBy((r) => r.statusClass).sort((a, b) => a.key.localeCompare(b.key)),
   );
   readonly byService = computed<Counted[]>(() => this.countBy((r) => r.service));
+  readonly byEndpoint = computed<Counted[]>(() => this.countBy((r) => r.nrDic));
   readonly topEndpoints = computed<Counted[]>(() => this.limited(this.countBy((r) => r.nrDic), this.endpointsLimit()));
   readonly topUrls = computed<Counted[]>(() => this.limited(this.countBy((r) => r.urlPath || r.url), this.urlsLimit()));
   readonly topIps = computed<Counted[]>(() => this.limited(this.countBy((r) => r.ip), this.ipsLimit()));
@@ -203,6 +210,36 @@ export class DataService {
   readonly topHttpCodes = computed<Counted[]>(() =>
     this.countBy((r) => r.httpStatus, (r) => r.httpStatus !== '—'),
   );
+
+  // --- Sources (IP + member name) ------------------------------------------
+  readonly selectedSource = signal<string>(''); // '' = auto (top source)
+
+  /** All sources sorted by request count (key = ip). */
+  readonly bySource = computed<Counted[]>(() => this.countBy((r) => r.ip));
+
+  /** The ip currently drilled into (selected or the busiest one). */
+  readonly activeSource = computed<string>(() => {
+    const sel = this.selectedSource();
+    if (sel) return sel;
+    return this.bySource()[0]?.key ?? '';
+  });
+
+  /** Endpoint breakdown for the active source. */
+  readonly sourceEndpoints = computed<Counted[]>(() => {
+    const ip = this.activeSource();
+    if (!ip) return [];
+    return this.countBy((r) => r.nrDic, (r) => r.ip === ip);
+  });
+
+  resolveName(ip: string): string {
+    return this.members().get(ip) || '';
+  }
+
+  /** Human label for a source ip: member name, or "неизвестный · ip". */
+  sourceLabel(ip: string): string {
+    const name = this.resolveName(ip);
+    return name ? name : `${this.UNKNOWN} · ${ip}`;
+  }
 
   // --- Loading --------------------------------------------------------------
   async loadDefault(): Promise<void> {
@@ -233,6 +270,37 @@ export class DataService {
     } finally {
       this.loading.set(false);
     }
+  }
+
+  async loadMembers(): Promise<void> {
+    try {
+      let text: string | null = null;
+      if (window.metricsAPI?.isElectron) {
+        const res = await window.metricsAPI.loadMembers();
+        if (res.ok && res.content != null) text = res.content;
+      } else {
+        const resp = await fetch('members.csv');
+        if (resp.ok) text = await resp.text();
+      }
+      if (text != null) this.members.set(this.parseMembers(text));
+    } catch {
+      /* members are optional — ignore failures */
+    }
+  }
+
+  /** members.csv: `"ip", "name"` (quotes and spaces tolerated). */
+  private parseMembers(text: string): Map<string, string> {
+    const map = new Map<string, string>();
+    const lines = text.split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const cols = line.split(',').map((c) => c.trim().replace(/^"|"$/g, '').trim());
+      const ip = cols[0];
+      const name = cols[1] ?? '';
+      if (!ip || ip.toLowerCase() === 'ip') continue; // skip header
+      if (name) map.set(ip, name);
+    }
+    return map;
   }
 
   async pickFile(): Promise<void> {
@@ -288,6 +356,7 @@ export class DataService {
     this.ipQuery.set('');
     this.textQuery.set('');
     this.onlyErrors.set(false);
+    this.selectedSource.set('');
   }
 
   toggleSet(sig: ReturnType<typeof signal<Set<string>>>, value: string): void {
@@ -308,6 +377,7 @@ export class DataService {
         logger: r.logger,
         message: r.message,
         ip_requester: r.ip,
+        requester_name: this.resolveName(r.ip) || this.UNKNOWN,
         exception: r.exception,
         url: r.url,
         nr_dic: r.nrDic,

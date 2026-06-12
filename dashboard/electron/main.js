@@ -5,33 +5,46 @@ const fs = require('fs');
 const isDev = !app.isPackaged || process.env.ELECTRON_DEV === '1';
 
 /**
- * Returns the list of candidate locations for the default data.csv,
- * ordered by priority. The first existing one wins.
+ * Returns candidate locations for a named data file (e.g. data.csv,
+ * members.csv), ordered by priority. The first existing one wins.
  */
-function defaultCsvCandidates() {
+function fileCandidates(fileName) {
   const candidates = [];
 
   // Portable build: directory where the user placed the portable .exe
   if (process.env.PORTABLE_EXECUTABLE_DIR) {
-    candidates.push(path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data.csv'));
+    candidates.push(path.join(process.env.PORTABLE_EXECUTABLE_DIR, fileName));
   }
 
   // Installed build / generic: folder next to the running executable
   try {
-    candidates.push(path.join(path.dirname(app.getPath('exe')), 'data.csv'));
+    candidates.push(path.join(path.dirname(app.getPath('exe')), fileName));
   } catch {
     /* ignore */
   }
 
   // Bundled fallback copy shipped inside the app resources
   if (process.resourcesPath) {
-    candidates.push(path.join(process.resourcesPath, 'data.csv'));
+    candidates.push(path.join(process.resourcesPath, fileName));
   }
 
   // Dev: project root
-  candidates.push(path.join(__dirname, '..', 'data.csv'));
+  candidates.push(path.join(__dirname, '..', fileName));
 
   return candidates;
+}
+
+function loadNamedFile(fileName) {
+  for (const candidate of fileCandidates(fileName)) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return { ok: true, path: candidate, content: readCsvFile(candidate) };
+      }
+    } catch (err) {
+      return { ok: false, path: candidate, error: String(err) };
+    }
+  }
+  return { ok: false, error: `${fileName} не найден рядом с приложением.` };
 }
 
 function readCsvFile(filePath) {
@@ -78,18 +91,10 @@ function createWindow() {
 }
 
 // --- IPC: load the default data.csv discovered next to the exe / bundled ---
-ipcMain.handle('csv:loadDefault', async () => {
-  for (const candidate of defaultCsvCandidates()) {
-    try {
-      if (fs.existsSync(candidate)) {
-        return { ok: true, path: candidate, content: readCsvFile(candidate) };
-      }
-    } catch (err) {
-      return { ok: false, path: candidate, error: String(err) };
-    }
-  }
-  return { ok: false, error: 'data.csv not found next to the application.' };
-});
+ipcMain.handle('csv:loadDefault', async () => loadNamedFile('data.csv'));
+
+// --- IPC: load members.csv (ip -> name mapping) ---
+ipcMain.handle('members:loadDefault', async () => loadNamedFile('members.csv'));
 
 // --- IPC: let the user pick any CSV file ---
 ipcMain.handle('csv:pick', async () => {

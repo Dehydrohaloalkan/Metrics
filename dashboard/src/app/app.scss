@@ -508,6 +508,31 @@ tbody td {
   color: var(--err);
 }
 
+.src-name {
+  display: block;
+  font-weight: 600;
+}
+.src-ip {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.seg-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.seg-select select {
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12.5px;
+  max-width: 260px;
+}
+
 .http {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
