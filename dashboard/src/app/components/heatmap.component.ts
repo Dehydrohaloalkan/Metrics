@@ -107,13 +107,16 @@ import { Heatmap } from '../services/data.service';
         color: var(--text-muted);
       }
       .hm__grad {
-        width: 120px;
+        width: 140px;
         height: 10px;
         border-radius: 999px;
         background: linear-gradient(
           90deg,
-          color-mix(in srgb, var(--accent) 12%, transparent),
-          var(--accent)
+          rgb(59, 76, 202),
+          rgb(34, 211, 238),
+          rgb(52, 211, 153),
+          rgb(251, 191, 36),
+          rgb(251, 113, 133)
         );
       }
       .hm__empty {
@@ -131,12 +134,32 @@ export class HeatmapComponent {
 
   readonly cellMin = computed(() => (this.data().cols > 48 ? 13 : this.data().cols > 24 ? 16 : 22));
 
+  // indigo -> cyan -> green -> amber -> rose: strong contrast even for
+  // values that are close together.
+  private readonly stops = [
+    [59, 76, 202],
+    [34, 211, 238],
+    [52, 211, 153],
+    [251, 191, 36],
+    [251, 113, 133],
+  ];
+
   color(count: number): string {
-    const max = this.data().max;
-    if (!count || max <= 0) return 'var(--chip-bg)';
-    const t = Math.pow(count / max, 0.6);
-    const pct = Math.round(12 + 88 * t);
-    return `color-mix(in srgb, var(--accent) ${pct}%, transparent)`;
+    if (!count) return 'var(--chip-bg)';
+    const { min, max } = this.data();
+    // Stretch the actual value range so similar counts still differ visibly.
+    const t = max > min ? (count - min) / (max - min) : 1;
+    return this.colorScale(t);
+  }
+
+  private colorScale(t: number): string {
+    const x = Math.max(0, Math.min(1, t)) * (this.stops.length - 1);
+    const i = Math.floor(x);
+    const f = x - i;
+    const a = this.stops[i];
+    const b = this.stops[Math.min(i + 1, this.stops.length - 1)];
+    const c = a.map((av, k) => Math.round(av + (b[k] - av) * f));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
   }
 
   cellTitle(day: string, colIdx: number, count: number): string {

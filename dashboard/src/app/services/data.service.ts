@@ -40,7 +40,9 @@ export interface Heatmap {
   bucketMin: number;
   cols: number;
   colLabels: string[]; // hour number at hour boundaries, '' otherwise
+  timeLabels: string[]; // HH:MM for every column
   rows: HeatRow[];
+  min: number; // smallest non-zero cell (for contrast stretch)
   max: number;
   grandTotal: number;
 }
@@ -270,10 +272,17 @@ export class DataService {
     }
 
     const colLabels: string[] = [];
+    const timeLabels: string[] = [];
+    const pad = (x: number) => String(x).padStart(2, '0');
     for (let c = 0; c < cols; c++) {
       const m = c * bm;
       colLabels.push(m % 60 === 0 ? String(m / 60) : '');
+      timeLabels.push(`${pad(Math.floor(m / 60))}:${pad(m % 60)}`);
     }
+
+    let min = Infinity;
+    for (const r of grid) for (const v of r) if (v > 0 && v < min) min = v;
+    if (min === Infinity) min = 0;
 
     const rows: HeatRow[] = grid.map((cells, day) => ({
       day,
@@ -282,7 +291,7 @@ export class DataService {
       total: cells.reduce((a, b) => a + b, 0),
     }));
 
-    return { bucketMin: bm, cols, colLabels, rows, max, grandTotal };
+    return { bucketMin: bm, cols, colLabels, timeLabels, rows, min, max, grandTotal };
   });
 
   resolveName(ip: string): string {

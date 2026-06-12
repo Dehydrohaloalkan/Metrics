@@ -299,12 +299,26 @@
                 <app-chart-panel title="По сервисам" [config]="serviceConfig()" [empty]="!data.byService().length" />
               }
               @case ('sourcePie') {
-                <app-chart-panel title="Доли по источникам" subtitle="по запросам (топ-8 + прочие)"
-                                 [config]="sourcePieConfig()" [height]="280" [empty]="!data.bySource().length" />
+                <app-chart-panel title="Доли по источникам" subtitle="по запросам"
+                                 [config]="sourcePieConfig()" [height]="280" [empty]="!data.bySource().length">
+                  <div panelActions class="seg">
+                    @for (n of pieLimitOptions; track n) {
+                      <button class="seg__btn" [class.seg__btn--on]="sourcePieLimit() === n"
+                              (click)="sourcePieLimit.set(n)">{{ limitLabel(n) }}</button>
+                    }
+                  </div>
+                </app-chart-panel>
               }
               @case ('endpointPie') {
-                <app-chart-panel title="Доли по эндпоинтам" subtitle="nr_dic (топ-8 + прочие)"
-                                 [config]="endpointPieConfig()" [height]="280" [empty]="!data.byEndpoint().length" />
+                <app-chart-panel title="Доли по эндпоинтам" subtitle="nr_dic"
+                                 [config]="endpointPieConfig()" [height]="280" [empty]="!data.byEndpoint().length">
+                  <div panelActions class="seg">
+                    @for (n of pieLimitOptions; track n) {
+                      <button class="seg__btn" [class.seg__btn--on]="endpointPieLimit() === n"
+                              (click)="endpointPieLimit.set(n)">{{ limitLabel(n) }}</button>
+                    }
+                  </div>
+                </app-chart-panel>
               }
               @case ('drilldown') {
                 <app-chart-panel title="Эндпоинты выбранного источника"
@@ -323,23 +337,49 @@
                 </app-chart-panel>
               }
               @case ('heatmap') {
-                <section class="panel heatmap-panel">
-                  <header class="panel__head">
-                    <div>
-                      <h3>Активность по дням недели и времени</h3>
-                      <p class="muted">все дни наложены по дню недели — видно, в какие часы/минуты пик запросов</p>
+                @if (activityView() === 'overlay') {
+                  <app-chart-panel title="Активность по времени суток"
+                                   subtitle="наложение по дням недели — пики в одно и то же время"
+                                   [config]="activityOverlayConfig()" [height]="330"
+                                   [empty]="!data.heatmap().grandTotal">
+                    <div panelActions class="acts">
+                      <div class="seg">
+                        <button class="seg__btn" [class.seg__btn--on]="true" (click)="setActivityView('overlay')">Линии</button>
+                        <button class="seg__btn" (click)="setActivityView('heatmap')">Карта</button>
+                      </div>
+                      <div class="seg">
+                        @for (b of heatBuckets; track b) {
+                          <button class="seg__btn" [class.seg__btn--on]="data.heatmapBucketMin() === b"
+                                  (click)="data.heatmapBucketMin.set(b)">{{ b }}м</button>
+                        }
+                      </div>
                     </div>
-                    <div class="seg">
-                      @for (b of heatBuckets; track b) {
-                        <button class="seg__btn" [class.seg__btn--on]="data.heatmapBucketMin() === b"
-                                (click)="data.heatmapBucketMin.set(b)">{{ b }}м</button>
-                      }
+                  </app-chart-panel>
+                } @else {
+                  <section class="panel heatmap-panel">
+                    <header class="panel__head">
+                      <div>
+                        <h3>Активность по дням недели и времени</h3>
+                        <p class="muted">все дни наложены по дню недели — видно, в какие часы/минуты пик</p>
+                      </div>
+                      <div class="acts">
+                        <div class="seg">
+                          <button class="seg__btn" (click)="setActivityView('overlay')">Линии</button>
+                          <button class="seg__btn" [class.seg__btn--on]="true" (click)="setActivityView('heatmap')">Карта</button>
+                        </div>
+                        <div class="seg">
+                          @for (b of heatBuckets; track b) {
+                            <button class="seg__btn" [class.seg__btn--on]="data.heatmapBucketMin() === b"
+                                    (click)="data.heatmapBucketMin.set(b)">{{ b }}м</button>
+                          }
+                        </div>
+                      </div>
+                    </header>
+                    <div class="heatmap-panel__body">
+                      <app-heatmap [data]="data.heatmap()" />
                     </div>
-                  </header>
-                  <div class="heatmap-panel__body">
-                    <app-heatmap [data]="data.heatmap()" />
-                  </div>
-                </section>
+                  </section>
+                }
               }
             }
           </div>

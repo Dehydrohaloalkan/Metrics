@@ -357,17 +357,55 @@ export class App implements OnInit {
     ),
   );
 
+  readonly sourcePieLimit = signal(10);
+  readonly endpointPieLimit = signal(10);
+  readonly pieLimitOptions = [10, 20, 0]; // 0 = все
+
   readonly sourcePieConfig = computed<ChartConfiguration<'doughnut'>>(() =>
-    this.doughnutFrom(this.data.bySource().map((i) => ({ key: this.data.sourceLabel(i.key), count: i.count }))),
+    this.doughnutFrom(
+      this.data.bySource().map((i) => ({ key: this.data.sourceLabel(i.key), count: i.count })),
+      this.sourcePieLimit(),
+    ),
   );
   readonly endpointPieConfig = computed<ChartConfiguration<'doughnut'>>(() =>
-    this.doughnutFrom(this.data.byEndpoint()),
+    this.doughnutFrom(this.data.byEndpoint(), this.endpointPieLimit()),
   );
   readonly sourceEndpointsConfig = computed<ChartConfiguration<'bar'>>(() =>
     this.hbarConfig(this.data.sourceEndpoints(), 'Запросы'),
   );
   readonly sourceTotal = computed(() => this.data.sourceEndpoints().reduce((s, i) => s + i.count, 0));
   readonly urlsConfig = computed<ChartConfiguration<'bar'>>(() => this.hbarConfig(this.data.topUrls(), 'Запросы'));
+  // Activity: overlay one line per weekday over the time-of-day axis.
+  readonly activityView = signal<'overlay' | 'heatmap'>(this.settings.get('activityView', 'overlay'));
+
+  setActivityView(v: 'overlay' | 'heatmap'): void {
+    this.activityView.set(v);
+    this.settings.set('activityView', v);
+  }
+
+  readonly activityOverlayConfig = computed<ChartConfiguration<'line'>>(() => {
+    const p = this.themeSvc.palette();
+    const hm = this.data.heatmap();
+    return {
+      type: 'line',
+      data: {
+        labels: hm.timeLabels,
+        datasets: hm.rows.map((row, idx) => ({
+          label: row.label,
+          data: row.cells,
+          borderColor: p.series[idx % p.series.length],
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          tension: 0.35,
+          pointRadius: hm.cols > 24 ? 0 : 2,
+          pointHoverRadius: 4,
+          fill: false,
+        })),
+      },
+      options: this.lineOptions(p),
+    };
+  });
+
   readonly serviceConfig = computed<ChartConfiguration<'doughnut'>>(() => {
     const p = this.themeSvc.palette();
     const items = this.data.byService();
@@ -418,10 +456,10 @@ export class App implements OnInit {
     };
   }
 
-  /** Doughnut from a counted list: top 8 slices + an aggregated "прочие". */
-  private doughnutFrom(items: { key: string; count: number }[]): ChartConfiguration<'doughnut'> {
+  /** Doughnut from a counted list: top N slices + an aggregated "прочие". */
+  private doughnutFrom(items: { key: string; count: number }[], limit = 8): ChartConfiguration<'doughnut'> {
     const p = this.themeSvc.palette();
-    const TOP = 8;
+    const TOP = limit > 0 ? limit : items.length;
     let slices = items;
     if (items.length > TOP + 1) {
       const head = items.slice(0, TOP);
