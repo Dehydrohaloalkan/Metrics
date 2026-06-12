@@ -1,4 +1,13 @@
-import { Component, computed, signal, inject, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import {
+  Component,
+  computed,
+  signal,
+  inject,
+  OnInit,
+  HostListener,
+  ChangeDetectionStrategy,
+} from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ChartConfiguration } from 'chart.js';
 import { DataService, Granularity } from './services/data.service';
@@ -14,7 +23,7 @@ type SortKey = 'date' | 'level' | 'service' | 'nrDic' | 'httpCode' | 'ip';
   selector: 'app-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ChartPanelComponent, HeatmapComponent],
+  imports: [FormsModule, NgTemplateOutlet, ChartPanelComponent, HeatmapComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -56,7 +65,84 @@ export class App implements OnInit {
   widgetSpan(key: string): string {
     if (key === 'heatmap') return 'span-3';
     if (key === 'timeseries' || key === 'urls' || key === 'drilldown') return 'span-2';
+    // pies widen when showing many slices so legends fit
+    if (key === 'sourcePie') return this.sourcePieLimit() === 10 ? '' : 'span-2';
+    if (key === 'endpointPie') return this.endpointPieLimit() === 10 ? '' : 'span-2';
     return '';
+  }
+
+  /** Number of legend rows a pie will show (top N + "прочие"). */
+  pieSlices(total: number, limit: number): number {
+    return limit > 0 ? Math.min(limit + 1, total) : total;
+  }
+
+  /** Height for a doughnut so its right-side legend fits all slices. */
+  pieHeight(n: number): number {
+    return Math.min(760, Math.max(280, n * 22 + 40));
+  }
+
+  // ===================== Fullscreen / presentation mode =====================
+  readonly focusedWidget = signal<string | null>(null);
+  readonly fsHeight = signal<number>(620);
+
+  private readonly WIDGET_TITLES: Record<string, string> = {
+    timeseries: 'Динамика запросов и ошибок',
+    levels: 'Уровни логов',
+    status: 'Классы HTTP-статусов',
+    endpoints: 'Топ эндпоинтов (nr_dic)',
+    ips: 'Топ источников (IP)',
+    urls: 'Топ URL',
+    httpcodes: 'HTTP-коды',
+    service: 'По сервисам',
+    sourcePie: 'Доли по источникам',
+    endpointPie: 'Доли по эндпоинтам',
+    drilldown: 'Эндпоинты выбранного источника',
+    heatmap: 'Активность по времени',
+  };
+
+  /** Ordered, currently-available widget keys (for presentation navigation). */
+  readonly focusList = computed(() => this.widgets().filter((k) => this.widgetAvailable(k)));
+
+  widgetTitle(key: string): string {
+    return this.WIDGET_TITLES[key] ?? key;
+  }
+
+  openFocus(key: string): void {
+    this.updateFsHeight();
+    this.focusedWidget.set(key);
+  }
+  closeFocus(): void {
+    this.focusedWidget.set(null);
+  }
+  focusStep(dir: number): void {
+    const list = this.focusList();
+    const cur = this.focusedWidget();
+    if (!cur || !list.length) return;
+    const idx = (list.indexOf(cur) + dir + list.length) % list.length;
+    this.focusedWidget.set(list[idx]);
+  }
+  focusPos(): string {
+    const list = this.focusList();
+    const cur = this.focusedWidget();
+    const i = cur ? list.indexOf(cur) : -1;
+    return i >= 0 ? `${i + 1} / ${list.length}` : '';
+  }
+
+  private updateFsHeight(): void {
+    this.fsHeight.set(Math.max(320, window.innerHeight - 170));
+  }
+
+  @HostListener('window:resize')
+  onResize(): void {
+    if (this.focusedWidget()) this.updateFsHeight();
+  }
+
+  @HostListener('document:keydown', ['$event'])
+  onKey(ev: KeyboardEvent): void {
+    if (!this.focusedWidget()) return;
+    if (ev.key === 'Escape') this.closeFocus();
+    else if (ev.key === 'ArrowRight') this.focusStep(1);
+    else if (ev.key === 'ArrowLeft') this.focusStep(-1);
   }
 
   onDragStart(ev: DragEvent, key: string): void {

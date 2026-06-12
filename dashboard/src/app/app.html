@@ -236,161 +236,198 @@
             @if (editMode()) {
               <div class="widget__handle">⠿ перетащите</div>
             }
-            @switch (key) {
-              @case ('timeseries') {
-                <app-chart-panel title="Динамика запросов и ошибок"
-                                 [subtitle]="'Гранулярность: ' + data.effectiveGranularity()"
-                                 [config]="timeSeriesConfig()" [height]="300"
-                                 [empty]="!data.timeSeries().length">
-                  <div panelActions class="seg">
-                    @for (g of granularities; track g.key) {
-                      <button class="seg__btn" [class.seg__btn--on]="data.granularity() === g.key"
-                              (click)="setGranularity(g.key)">{{ g.label }}</button>
-                    }
-                  </div>
-                </app-chart-panel>
-              }
-              @case ('levels') {
-                <app-chart-panel title="Уровни логов" [config]="levelConfig()" [empty]="!data.byLevel().length" />
-              }
-              @case ('status') {
-                <app-chart-panel title="Классы HTTP-статусов" [config]="statusClassConfig()" [empty]="!data.byStatusClass().length" />
-              }
-              @case ('endpoints') {
-                <app-chart-panel title="Топ эндпоинтов (nr_dic)" [config]="endpointsConfig()"
-                                 [height]="barHeight(data.topEndpoints().length)" [bodyMaxHeight]="420"
-                                 [empty]="!data.topEndpoints().length">
-                  <div panelActions class="seg">
-                    @for (n of limitOptions; track n) {
-                      <button class="seg__btn" [class.seg__btn--on]="data.endpointsLimit() === n"
-                              (click)="data.endpointsLimit.set(n)">{{ limitLabel(n) }}</button>
-                    }
-                  </div>
-                </app-chart-panel>
-              }
-              @case ('ips') {
-                <app-chart-panel title="Топ источников (IP)" [config]="ipsConfig()"
-                                 [height]="barHeight(data.topIps().length)" [bodyMaxHeight]="420"
-                                 [empty]="!data.topIps().length">
-                  <div panelActions class="seg">
-                    @for (n of limitOptions; track n) {
-                      <button class="seg__btn" [class.seg__btn--on]="data.ipsLimit() === n"
-                              (click)="data.ipsLimit.set(n)">{{ limitLabel(n) }}</button>
-                    }
-                  </div>
-                </app-chart-panel>
-              }
-              @case ('urls') {
-                <app-chart-panel title="Топ URL (путь без хвостового /)" [config]="urlsConfig()"
-                                 [height]="barHeight(data.topUrls().length)" [bodyMaxHeight]="460"
-                                 [empty]="!data.topUrls().length">
-                  <div panelActions class="seg">
-                    @for (n of limitOptions; track n) {
-                      <button class="seg__btn" [class.seg__btn--on]="data.urlsLimit() === n"
-                              (click)="data.urlsLimit.set(n)">{{ limitLabel(n) }}</button>
-                    }
-                  </div>
-                </app-chart-panel>
-              }
-              @case ('httpcodes') {
-                <app-chart-panel title="HTTP-коды" [config]="httpCodesConfig()" [empty]="!data.topHttpCodes().length" />
-              }
-              @case ('service') {
-                <app-chart-panel title="По сервисам" [config]="serviceConfig()" [empty]="!data.byService().length" />
-              }
-              @case ('sourcePie') {
-                <app-chart-panel title="Доли по источникам" subtitle="по запросам"
-                                 [config]="sourcePieConfig()" [height]="280" [empty]="!data.bySource().length">
-                  <div panelActions class="seg">
-                    @for (n of pieLimitOptions; track n) {
-                      <button class="seg__btn" [class.seg__btn--on]="sourcePieLimit() === n"
-                              (click)="sourcePieLimit.set(n)">{{ limitLabel(n) }}</button>
-                    }
-                  </div>
-                </app-chart-panel>
-              }
-              @case ('endpointPie') {
-                <app-chart-panel title="Доли по эндпоинтам" subtitle="nr_dic"
-                                 [config]="endpointPieConfig()" [height]="280" [empty]="!data.byEndpoint().length">
-                  <div panelActions class="seg">
-                    @for (n of pieLimitOptions; track n) {
-                      <button class="seg__btn" [class.seg__btn--on]="endpointPieLimit() === n"
-                              (click)="endpointPieLimit.set(n)">{{ limitLabel(n) }}</button>
-                    }
-                  </div>
-                </app-chart-panel>
-              }
-              @case ('drilldown') {
-                <app-chart-panel title="Эндпоинты выбранного источника"
-                                 [subtitle]="data.sourceEndpoints().length + ' эндпоинтов · ' + fmtNum(sourceTotal())"
-                                 [config]="sourceEndpointsConfig()"
-                                 [height]="barHeight(data.sourceEndpoints().length)" [bodyMaxHeight]="420"
-                                 [empty]="!data.sourceEndpoints().length">
-                  <div panelActions class="seg-select">
-                    <span class="muted">Источник:</span>
-                    <select [ngModel]="data.activeSource()" (ngModelChange)="data.selectedSource.set($event)">
-                      @for (s of data.bySource(); track s.key) {
-                        <option [value]="s.key">{{ data.sourceLabel(s.key) }} — {{ fmtNum(s.count) }}</option>
-                      }
-                    </select>
-                  </div>
-                </app-chart-panel>
-              }
-              @case ('heatmap') {
-                @if (activityView() === 'overlay') {
-                  <app-chart-panel title="Активность по времени суток"
-                                   subtitle="наложение по дням недели — пики в одно и то же время"
-                                   [config]="activityOverlayConfig()" [height]="330"
-                                   [empty]="!data.heatmap().grandTotal">
-                    <div panelActions class="acts">
-                      <div class="seg">
-                        <button class="seg__btn" [class.seg__btn--on]="true" (click)="setActivityView('overlay')">Линии</button>
-                        <button class="seg__btn" (click)="setActivityView('heatmap')">Карта</button>
-                      </div>
-                      <div class="seg">
-                        <button class="seg__btn" [class.seg__btn--on]="activityDays() === 'all'" (click)="setActivityDays('all')">Все дни</button>
-                        <button class="seg__btn" [class.seg__btn--on]="activityDays() === 'weekdays'" (click)="setActivityDays('weekdays')">Будни</button>
-                        <button class="seg__btn" [class.seg__btn--on]="activityDays() === 'weekend'" (click)="setActivityDays('weekend')">Вых</button>
-                      </div>
-                      <div class="seg">
-                        @for (b of heatBuckets; track b) {
-                          <button class="seg__btn" [class.seg__btn--on]="data.heatmapBucketMin() === b"
-                                  (click)="data.heatmapBucketMin.set(b)">{{ b }}м</button>
-                        }
-                      </div>
-                    </div>
-                  </app-chart-panel>
-                } @else {
-                  <section class="panel heatmap-panel">
-                    <header class="panel__head">
-                      <div>
-                        <h3>Активность по дням недели и времени</h3>
-                        <p class="muted">все дни наложены по дню недели — видно, в какие часы/минуты пик</p>
-                      </div>
-                      <div class="acts">
-                        <div class="seg">
-                          <button class="seg__btn" (click)="setActivityView('overlay')">Линии</button>
-                          <button class="seg__btn" [class.seg__btn--on]="true" (click)="setActivityView('heatmap')">Карта</button>
-                        </div>
-                        <div class="seg">
-                          @for (b of heatBuckets; track b) {
-                            <button class="seg__btn" [class.seg__btn--on]="data.heatmapBucketMin() === b"
-                                    (click)="data.heatmapBucketMin.set(b)">{{ b }}м</button>
-                          }
-                        </div>
-                      </div>
-                    </header>
-                    <div class="heatmap-panel__body">
-                      <app-heatmap [data]="data.heatmap()" />
-                    </div>
-                  </section>
-                }
-              }
-            }
+            <ng-container [ngTemplateOutlet]="widgetTpl" [ngTemplateOutletContext]="{ $implicit: key, fs: false }" />
           </div>
         }
       }
     </section>
+
+    <!-- widget renderer reused by the grid and the fullscreen overlay -->
+    <ng-template #widgetTpl let-key let-fs="fs">
+      @switch (key) {
+        @case ('timeseries') {
+          <app-chart-panel title="Динамика запросов и ошибок"
+                           [subtitle]="'Гранулярность: ' + data.effectiveGranularity()"
+                           [config]="timeSeriesConfig()" [height]="fs ? fsHeight() : 300"
+                           [empty]="!data.timeSeries().length"
+                           [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+            <div panelActions class="seg">
+              @for (g of granularities; track g.key) {
+                <button class="seg__btn" [class.seg__btn--on]="data.granularity() === g.key"
+                        (click)="setGranularity(g.key)">{{ g.label }}</button>
+              }
+            </div>
+          </app-chart-panel>
+        }
+        @case ('levels') {
+          <app-chart-panel title="Уровни логов" [config]="levelConfig()" [height]="fs ? fsHeight() : 260"
+                           [empty]="!data.byLevel().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+        }
+        @case ('status') {
+          <app-chart-panel title="Классы HTTP-статусов" [config]="statusClassConfig()" [height]="fs ? fsHeight() : 260"
+                           [empty]="!data.byStatusClass().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+        }
+        @case ('endpoints') {
+          <app-chart-panel title="Топ эндпоинтов (nr_dic)" [config]="endpointsConfig()"
+                           [height]="barHeight(data.topEndpoints().length)" [bodyMaxHeight]="fs ? fsHeight() : 420"
+                           [empty]="!data.topEndpoints().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+            <div panelActions class="seg">
+              @for (n of limitOptions; track n) {
+                <button class="seg__btn" [class.seg__btn--on]="data.endpointsLimit() === n"
+                        (click)="data.endpointsLimit.set(n)">{{ limitLabel(n) }}</button>
+              }
+            </div>
+          </app-chart-panel>
+        }
+        @case ('ips') {
+          <app-chart-panel title="Топ источников (IP)" [config]="ipsConfig()"
+                           [height]="barHeight(data.topIps().length)" [bodyMaxHeight]="fs ? fsHeight() : 420"
+                           [empty]="!data.topIps().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+            <div panelActions class="seg">
+              @for (n of limitOptions; track n) {
+                <button class="seg__btn" [class.seg__btn--on]="data.ipsLimit() === n"
+                        (click)="data.ipsLimit.set(n)">{{ limitLabel(n) }}</button>
+              }
+            </div>
+          </app-chart-panel>
+        }
+        @case ('urls') {
+          <app-chart-panel title="Топ URL (путь без хвостового /)" [config]="urlsConfig()"
+                           [height]="barHeight(data.topUrls().length)" [bodyMaxHeight]="fs ? fsHeight() : 460"
+                           [empty]="!data.topUrls().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+            <div panelActions class="seg">
+              @for (n of limitOptions; track n) {
+                <button class="seg__btn" [class.seg__btn--on]="data.urlsLimit() === n"
+                        (click)="data.urlsLimit.set(n)">{{ limitLabel(n) }}</button>
+              }
+            </div>
+          </app-chart-panel>
+        }
+        @case ('httpcodes') {
+          <app-chart-panel title="HTTP-коды" [config]="httpCodesConfig()" [height]="fs ? fsHeight() : 260"
+                           [empty]="!data.topHttpCodes().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+        }
+        @case ('service') {
+          <app-chart-panel title="По сервисам" [config]="serviceConfig()" [height]="fs ? fsHeight() : 260"
+                           [empty]="!data.byService().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+        }
+        @case ('sourcePie') {
+          <app-chart-panel title="Доли по источникам" subtitle="по запросам"
+                           [config]="sourcePieConfig()"
+                           [height]="fs ? fsHeight() : pieHeight(pieSlices(data.bySource().length, sourcePieLimit()))"
+                           [empty]="!data.bySource().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+            <div panelActions class="seg">
+              @for (n of pieLimitOptions; track n) {
+                <button class="seg__btn" [class.seg__btn--on]="sourcePieLimit() === n"
+                        (click)="sourcePieLimit.set(n)">{{ limitLabel(n) }}</button>
+              }
+            </div>
+          </app-chart-panel>
+        }
+        @case ('endpointPie') {
+          <app-chart-panel title="Доли по эндпоинтам" subtitle="nr_dic"
+                           [config]="endpointPieConfig()"
+                           [height]="fs ? fsHeight() : pieHeight(pieSlices(data.byEndpoint().length, endpointPieLimit()))"
+                           [empty]="!data.byEndpoint().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+            <div panelActions class="seg">
+              @for (n of pieLimitOptions; track n) {
+                <button class="seg__btn" [class.seg__btn--on]="endpointPieLimit() === n"
+                        (click)="endpointPieLimit.set(n)">{{ limitLabel(n) }}</button>
+              }
+            </div>
+          </app-chart-panel>
+        }
+        @case ('drilldown') {
+          <app-chart-panel title="Эндпоинты выбранного источника"
+                           [subtitle]="data.sourceEndpoints().length + ' эндпоинтов · ' + fmtNum(sourceTotal())"
+                           [config]="sourceEndpointsConfig()"
+                           [height]="barHeight(data.sourceEndpoints().length)" [bodyMaxHeight]="fs ? fsHeight() : 420"
+                           [empty]="!data.sourceEndpoints().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+            <div panelActions class="seg-select">
+              <span class="muted">Источник:</span>
+              <select [ngModel]="data.activeSource()" (ngModelChange)="data.selectedSource.set($event)">
+                @for (s of data.bySource(); track s.key) {
+                  <option [value]="s.key">{{ data.sourceLabel(s.key) }} — {{ fmtNum(s.count) }}</option>
+                }
+              </select>
+            </div>
+          </app-chart-panel>
+        }
+        @case ('heatmap') {
+          @if (activityView() === 'overlay') {
+            <app-chart-panel title="Активность по времени суток"
+                             subtitle="наложение по дням недели — пики в одно и то же время"
+                             [config]="activityOverlayConfig()" [height]="fs ? fsHeight() : 330"
+                             [empty]="!data.heatmap().grandTotal"
+                             [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+              <div panelActions class="acts">
+                <div class="seg">
+                  <button class="seg__btn" [class.seg__btn--on]="true" (click)="setActivityView('overlay')">Линии</button>
+                  <button class="seg__btn" (click)="setActivityView('heatmap')">Карта</button>
+                </div>
+                <div class="seg">
+                  <button class="seg__btn" [class.seg__btn--on]="activityDays() === 'all'" (click)="setActivityDays('all')">Все дни</button>
+                  <button class="seg__btn" [class.seg__btn--on]="activityDays() === 'weekdays'" (click)="setActivityDays('weekdays')">Будни</button>
+                  <button class="seg__btn" [class.seg__btn--on]="activityDays() === 'weekend'" (click)="setActivityDays('weekend')">Вых</button>
+                </div>
+                <div class="seg">
+                  @for (b of heatBuckets; track b) {
+                    <button class="seg__btn" [class.seg__btn--on]="data.heatmapBucketMin() === b"
+                            (click)="data.heatmapBucketMin.set(b)">{{ b }}м</button>
+                  }
+                </div>
+              </div>
+            </app-chart-panel>
+          } @else {
+            <section class="panel heatmap-panel">
+              <header class="panel__head">
+                <div>
+                  <h3>Активность по дням недели и времени</h3>
+                  <p class="muted">все дни наложены по дню недели — видно, в какие часы/минуты пик</p>
+                </div>
+                <div class="panel__tools">
+                  <div class="acts">
+                    <div class="seg">
+                      <button class="seg__btn" (click)="setActivityView('overlay')">Линии</button>
+                      <button class="seg__btn" [class.seg__btn--on]="true" (click)="setActivityView('heatmap')">Карта</button>
+                    </div>
+                    <div class="seg">
+                      @for (b of heatBuckets; track b) {
+                        <button class="seg__btn" [class.seg__btn--on]="data.heatmapBucketMin() === b"
+                                (click)="data.heatmapBucketMin.set(b)">{{ b }}м</button>
+                      }
+                    </div>
+                  </div>
+                  @if (!fs && !editMode()) {
+                    <button class="panel__fs" (click)="openFocus(key)" title="На весь экран">⛶</button>
+                  }
+                </div>
+              </header>
+              <div class="heatmap-panel__body">
+                <app-heatmap [data]="data.heatmap()" />
+              </div>
+            </section>
+          }
+        }
+      }
+    </ng-template>
+
+    <!-- ===== Fullscreen / presentation overlay ===== -->
+    @if (focusedWidget(); as fkey) {
+      <div class="focus">
+        <header class="focus__bar">
+          <button class="btn btn--ghost" (click)="focusStep(-1)" title="Предыдущий (←)">‹ Назад</button>
+          <span class="focus__title">{{ widgetTitle(fkey) }} <em>{{ focusPos() }}</em></span>
+          <div class="focus__right">
+            <button class="btn btn--ghost" (click)="focusStep(1)" title="Следующий (→)">Вперёд ›</button>
+            <button class="btn btn--icon" (click)="closeFocus()" title="Закрыть (Esc)">✕</button>
+          </div>
+        </header>
+        <div class="focus__body">
+          <ng-container [ngTemplateOutlet]="widgetTpl" [ngTemplateOutletContext]="{ $implicit: fkey, fs: true }" />
+        </div>
+      </div>
+    }
 
     <!-- ===== Logs table ===== -->
     <section class="panel table-panel">
