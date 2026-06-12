@@ -5,4 +5,6 @@ contextBridge.exposeInMainWorld('metricsAPI', {
   loadDefault: () => ipcRenderer.invoke('csv:loadDefault'),
   loadMembers: () => ipcRenderer.invoke('members:loadDefault'),
   pickFile: () => ipcRenderer.invoke('csv:pick'),
+  loadSettings: () => ipcRenderer.sendSync('settings:get'),
+  saveSettings: (data) => ipcRenderer.invoke('settings:set', data),
 });

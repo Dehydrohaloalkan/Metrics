@@ -1,4 +1,5 @@
-import { Injectable, signal, effect } from '@angular/core';
+import { Injectable, signal, effect, inject } from '@angular/core';
+import { SettingsService } from './settings.service';
 
 export type Theme = 'dark' | 'light';
 
@@ -13,17 +14,14 @@ export interface ChartPalette {
 
 @Injectable({ providedIn: 'root' })
 export class ThemeService {
+  private readonly settings = inject(SettingsService);
   readonly theme = signal<Theme>(this.initial());
 
   constructor() {
     effect(() => {
       const t = this.theme();
       document.documentElement.setAttribute('data-theme', t);
-      try {
-        localStorage.setItem('metrics-theme', t);
-      } catch {
-        /* ignore */
-      }
+      this.settings.set('theme', t);
     });
   }
 
@@ -56,12 +54,7 @@ export class ThemeService {
   }
 
   private initial(): Theme {
-    try {
-      const saved = localStorage.getItem('metrics-theme') as Theme | null;
-      if (saved === 'dark' || saved === 'light') return saved;
-    } catch {
-      /* ignore */
-    }
-    return 'dark';
+    const saved = this.settings.get<Theme>('theme', 'dark');
+    return saved === 'light' || saved === 'dark' ? saved : 'dark';
   }
 }

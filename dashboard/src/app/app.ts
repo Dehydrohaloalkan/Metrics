@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ChartConfiguration } from 'chart.js';
 import { DataService, Granularity } from './services/data.service';
 import { ThemeService } from './services/theme.service';
+import { SettingsService } from './services/settings.service';
 import { ChartPanelComponent } from './components/chart-panel.component';
 import { HeatmapComponent } from './components/heatmap.component';
 import { LogRow } from './models';
@@ -20,6 +21,78 @@ type SortKey = 'date' | 'level' | 'service' | 'nrDic' | 'httpCode' | 'ip';
 export class App implements OnInit {
   readonly data = inject(DataService);
   readonly themeSvc = inject(ThemeService);
+  private readonly settings = inject(SettingsService);
+
+  // ---- dashboard layout (reorderable widgets) ----
+  readonly editMode = signal(false);
+  readonly defaultWidgets = [
+    'timeseries', 'levels', 'status', 'endpoints', 'ips', 'urls',
+    'httpcodes', 'service', 'sourcePie', 'endpointPie', 'drilldown', 'heatmap',
+  ];
+  readonly widgets = signal<string[]>(this.loadOrder());
+  readonly dragKey = signal<string | null>(null);
+  readonly overKey = signal<string | null>(null);
+
+  private loadOrder(): string[] {
+    const saved = this.settings.get<string[]>('widgetOrder', []);
+    const known = new Set(this.defaultWidgets);
+    const order = Array.isArray(saved) ? saved.filter((k) => known.has(k)) : [];
+    // append any widget keys not present in the saved order (e.g. new features)
+    for (const k of this.defaultWidgets) if (!order.includes(k)) order.push(k);
+    return order;
+  }
+
+  widgetAvailable(key: string): boolean {
+    switch (key) {
+      case 'httpcodes':
+        return this.data.topHttpCodes().length > 1;
+      case 'service':
+        return this.data.byService().length > 1;
+      default:
+        return true;
+    }
+  }
+
+  widgetSpan(key: string): string {
+    if (key === 'heatmap') return 'span-3';
+    if (key === 'timeseries' || key === 'urls' || key === 'drilldown') return 'span-2';
+    return '';
+  }
+
+  onDragStart(ev: DragEvent, key: string): void {
+    this.dragKey.set(key);
+    if (ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = 'move';
+      ev.dataTransfer.setData('text/plain', key);
+    }
+  }
+  onDragOver(ev: DragEvent, key: string): void {
+    if (!this.editMode()) return;
+    ev.preventDefault();
+    if (this.overKey() !== key) this.overKey.set(key);
+  }
+  onDrop(key: string): void {
+    const from = this.dragKey();
+    if (from && from !== key) {
+      const arr = this.widgets().filter((k) => k !== from);
+      arr.splice(arr.indexOf(key), 0, from);
+      this.widgets.set(arr);
+      this.settings.set('widgetOrder', arr);
+    }
+    this.endDrag();
+  }
+  onDragEnd(): void {
+    this.endDrag();
+  }
+  private endDrag(): void {
+    this.dragKey.set(null);
+    this.overKey.set(null);
+  }
+  resetOrder(): void {
+    const order = [...this.defaultWidgets];
+    this.widgets.set(order);
+    this.settings.set('widgetOrder', order);
+  }
 
   // table state
   readonly sortKey = signal<SortKey>('date');

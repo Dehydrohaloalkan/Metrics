@@ -96,6 +96,29 @@ ipcMain.handle('csv:loadDefault', async () => loadNamedFile('data.csv'));
 // --- IPC: load members.csv (ip -> name mapping) ---
 ipcMain.handle('members:loadDefault', async () => loadNamedFile('members.csv'));
 
+// --- IPC: persistent settings (settings.json in userData) ---
+function settingsPath() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
+ipcMain.on('settings:get', (event) => {
+  try {
+    const p = settingsPath();
+    event.returnValue = fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : {};
+  } catch {
+    event.returnValue = {};
+  }
+});
+
+ipcMain.handle('settings:set', async (_e, data) => {
+  try {
+    fs.writeFileSync(settingsPath(), JSON.stringify(data ?? {}, null, 2), 'utf8');
+    return { ok: true, path: settingsPath() };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
 // --- IPC: let the user pick any CSV file ---
 ipcMain.handle('csv:pick', async () => {
   const result = await dialog.showOpenDialog({

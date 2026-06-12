@@ -365,21 +365,90 @@
 .span-2 {
   grid-column: span 2;
 }
+.span-3 {
+  grid-column: 1 / -1;
+}
 @media (max-width: 1180px) {
   .grid {
     grid-template-columns: repeat(2, 1fr);
   }
-  .span-2 {
-    grid-column: span 2;
+  .span-2,
+  .span-3 {
+    grid-column: 1 / -1;
   }
 }
 @media (max-width: 720px) {
   .grid {
     grid-template-columns: 1fr;
   }
-  .span-2 {
+  .span-2,
+  .span-3 {
     grid-column: span 1;
   }
+}
+
+/* ===== Reorderable widgets ===== */
+.widget {
+  min-width: 0;
+  position: relative;
+  display: block;
+}
+.widget > app-chart-panel,
+.widget > .panel {
+  display: block;
+  height: 100%;
+}
+.widget--edit {
+  cursor: grab;
+  outline: 1.5px dashed var(--border-strong);
+  outline-offset: 5px;
+  border-radius: 18px;
+  user-select: none;
+}
+.widget--edit:active {
+  cursor: grabbing;
+}
+.widget--drag {
+  opacity: 0.45;
+}
+.widget--over {
+  outline: 2px solid var(--accent);
+}
+.widget__handle {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 3px 12px;
+  pointer-events: none;
+  box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+}
+.grid--edit .widget app-chart-panel,
+.grid--edit .widget .panel {
+  pointer-events: none;
+}
+
+.edit-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  font-size: 13px;
+  font-weight: 550;
+}
+.edit-hint > div {
+  display: flex;
+  gap: 8px;
 }
 
 .seg {
