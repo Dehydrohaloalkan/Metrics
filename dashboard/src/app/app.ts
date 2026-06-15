@@ -650,23 +650,51 @@ export class App implements OnInit {
     this.showToast('Добавлено в фильтр — период: ' + bucket.label + '. Нажмите «Применить»');
   }
 
+  /**
+   * Re-filtering a large dataset (and recomputing every chart) blocks the main
+   * thread. Paint the loading overlay first, then run the heavy signal writes on
+   * the next frame so the user gets feedback instead of a frozen UI.
+   */
+  private runWithLoading(phase: string, work: () => void): void {
+    this.data.loading.set(true);
+    this.data.progress.set({ phase, pct: 0 });
+    // Double rAF: the first frame lets the overlay actually paint, the second
+    // runs the heavy recompute (triggered by the signal writes in `work`).
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        try {
+          work();
+        } finally {
+          // The change detection sparked by `work` runs before this timer, so
+          // by now the heavy recompute is done — safe to drop the overlay.
+          setTimeout(() => {
+            this.data.loading.set(false);
+            this.data.progress.set(null);
+          });
+        }
+      }),
+    );
+  }
+
   // ---- draft filter commit / sync ----
   commitFilters(): void {
-    this.data.dateFrom.set(this.draftFrom());
-    this.data.dateTo.set(this.draftTo());
-    this.data.levels.set(new Set(this.draftLevels()));
-    this.data.statusClasses.set(new Set(this.draftStatusClasses()));
-    this.data.service.set(this.draftService());
-    this.data.endpoints.set(new Set(this.draftEndpoints()));
-    this.data.dicStatuses.set(new Set(this.draftDicStatuses()));
-    this.data.groupFilter.set(this.draftGroupFilter());
-    this.data.ipQuery.set(this.draftIpQuery());
-    this.data.nameQuery.set(this.draftNameQuery());
-    this.data.textQuery.set(this.draftTextQuery());
-    this.data.onlyErrors.set(this.draftOnlyErrors());
-    // A manual apply may diverge from the preset that was loaded.
-    this.activePreset.set(null);
-    this.page.set(0);
+    this.runWithLoading('Применение фильтров…', () => {
+      this.data.dateFrom.set(this.draftFrom());
+      this.data.dateTo.set(this.draftTo());
+      this.data.levels.set(new Set(this.draftLevels()));
+      this.data.statusClasses.set(new Set(this.draftStatusClasses()));
+      this.data.service.set(this.draftService());
+      this.data.endpoints.set(new Set(this.draftEndpoints()));
+      this.data.dicStatuses.set(new Set(this.draftDicStatuses()));
+      this.data.groupFilter.set(this.draftGroupFilter());
+      this.data.ipQuery.set(this.draftIpQuery());
+      this.data.nameQuery.set(this.draftNameQuery());
+      this.data.textQuery.set(this.draftTextQuery());
+      this.data.onlyErrors.set(this.draftOnlyErrors());
+      // A manual apply may diverge from the preset that was loaded.
+      this.activePreset.set(null);
+      this.page.set(0);
+    });
   }
 
   syncDraftFromService(): void {
@@ -738,10 +766,12 @@ export class App implements OnInit {
   }
 
   resetAll(): void {
-    this.data.resetFilters();
-    this.syncDraftFromService();
-    this.activePreset.set(null);
-    this.page.set(0);
+    this.runWithLoading('Сброс фильтров…', () => {
+      this.data.resetFilters();
+      this.syncDraftFromService();
+      this.activePreset.set(null);
+      this.page.set(0);
+    });
   }
 
   // ---- sorted + paged rows ----
