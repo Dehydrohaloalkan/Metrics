@@ -12,3 +12,12 @@ dashboard/release/
 *.log
 .DS_Store
 Thumbs.db
+
+# tooling / generated
+.omc/
+.playwright-mcp/
+
+# scratch screenshots
+app-filters.png
+edit-mode.png
+edit-widgets.png
