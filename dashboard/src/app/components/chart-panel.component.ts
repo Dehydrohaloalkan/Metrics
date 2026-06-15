@@ -10,8 +10,10 @@ import {
   ChangeDetectionStrategy,
 } from '@angular/core';
 import { Chart, ChartConfiguration, registerables } from 'chart.js';
+import { timeBrushPlugin } from './time-brush.plugin';
 
 Chart.register(...registerables);
+Chart.register(timeBrushPlugin);
 
 @Component({
   selector: 'app-chart-panel',

@@ -614,6 +614,31 @@ export class App implements OnInit {
     };
   }
 
+  // Drag a horizontal range across a time chart → stage that period as a filter.
+  // `starts` are the epoch-ms bucket starts matching the chart's category axis.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private withBrush(options: any, starts: () => number[]): any {
+    const opts = { ...options };
+    opts.plugins = {
+      ...(opts.plugins ?? {}),
+      timeBrush: { onSelect: (lo: number, hi: number) => this.onTimeRangeSelect(starts(), lo, hi) },
+    };
+    return opts;
+  }
+
+  /** Commit a brushed [loIndex..hiIndex] span to the draft date filter. */
+  onTimeRangeSelect(starts: number[], lo: number, hi: number): void {
+    if (!starts.length) return;
+    lo = Math.max(0, Math.min(starts.length - 1, lo));
+    hi = Math.max(lo, Math.min(starts.length - 1, hi));
+    const span = starts.length > 1 ? starts[1] - starts[0] : 36e5;
+    const from = starts[lo];
+    const to = (starts[hi + 1] ?? starts[hi] + span) - 1;
+    this.draftFrom.set(from);
+    this.draftTo.set(to);
+    this.showToast('Добавлено в фильтр — период выделен. Нажмите «Применить»');
+  }
+
   // Click a bar/slice (indexed by element index) → cross-filter.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private clickable(options: any, keys: () => string[], kind: CrossKind): any {
@@ -658,6 +683,11 @@ export class App implements OnInit {
   private runWithLoading(phase: string, work: () => void): void {
     this.data.loading.set(true);
     this.data.progress.set({ phase, pct: 0 });
+    const startedAt = performance.now();
+    // Keep the overlay on screen at least this long so fast operations still
+    // give visible feedback (otherwise the flash is sub-frame and looks like
+    // nothing happened). Heavy operations naturally exceed it.
+    const MIN_VISIBLE_MS = 300;
     // Double rAF: the first frame lets the overlay actually paint, the second
     // runs the heavy recompute (triggered by the signal writes in `work`).
     requestAnimationFrame(() =>
@@ -666,11 +696,12 @@ export class App implements OnInit {
           work();
         } finally {
           // The change detection sparked by `work` runs before this timer, so
-          // by now the heavy recompute is done — safe to drop the overlay.
+          // by now the heavy recompute is done — hide once the minimum elapsed.
+          const remaining = Math.max(0, MIN_VISIBLE_MS - (performance.now() - startedAt));
           setTimeout(() => {
             this.data.loading.set(false);
             this.data.progress.set(null);
-          });
+          }, remaining);
         }
       }),
     );
@@ -850,7 +881,10 @@ export class App implements OnInit {
     const p = this.themeSvc.palette();
     const buckets = this.data.timeSeries();
     const pr = buckets.length > 60 ? 0 : 2;
-    const opts = this.withClick(this.lineOptions(p), (i) => this.onTimeBucketClick(i));
+    const opts = this.withBrush(
+      this.withClick(this.lineOptions(p), (i) => this.onTimeBucketClick(i)),
+      () => buckets.map((b) => b.start),
+    );
     // add a right-hand axis for the error-rate %
     opts!.scales = {
       ...opts!.scales,
@@ -1186,7 +1220,10 @@ export class App implements OnInit {
           pointHoverRadius: 4,
         })),
       },
-      options: this.clickableDataset(this.lineOptions(p, true), () => ts.series.map((s) => s.id), 'group'),
+      options: this.withBrush(
+        this.clickableDataset(this.lineOptions(p, true), () => ts.series.map((s) => s.id), 'group'),
+        () => ts.starts,
+      ),
     };
   });
 
@@ -1267,7 +1304,10 @@ export class App implements OnInit {
           pointHoverRadius: 4,
         })),
       },
-      options: this.clickableDataset(opts, () => ts.series.map((s) => s.key), 'status'),
+      options: this.withBrush(
+        this.clickableDataset(opts, () => ts.series.map((s) => s.key), 'status'),
+        () => ts.starts,
+      ),
     };
   });
 
@@ -1291,7 +1331,10 @@ export class App implements OnInit {
           pointHoverRadius: 4,
         })),
       },
-      options: this.clickableDataset(this.lineOptions(p, true), () => ts.series.map((s) => s.id), 'endpoint'),
+      options: this.withBrush(
+        this.clickableDataset(this.lineOptions(p, true), () => ts.series.map((s) => s.id), 'endpoint'),
+        () => ts.starts,
+      ),
     };
   });
 
@@ -1318,7 +1361,10 @@ export class App implements OnInit {
           pointHoverRadius: 4,
         })),
       },
-      options: this.clickableDataset(this.lineOptions(p, true), () => ts.series.map((s) => s.key), 'dic'),
+      options: this.withBrush(
+        this.clickableDataset(this.lineOptions(p, true), () => ts.series.map((s) => s.key), 'dic'),
+        () => ts.starts,
+      ),
     };
   });
 

@@ -457,6 +457,7 @@ export class DataService {
 
   readonly groupTimeSeries = computed<{
     labels: string[];
+    starts: number[];
     series: { id: string; name: string; color: string; data: number[]; total: number }[];
   }>(() => {
     const g = this.effectiveGranularity();
@@ -486,7 +487,7 @@ export class DataService {
         total: [...m.values()].reduce((a, b) => a + b, 0),
       }))
       .sort((a, b) => b.total - a.total);
-    return { labels, series };
+    return { labels, starts: sorted, series };
   });
 
   // --- Pareto (source concentration) ---------------------------------------
@@ -502,7 +503,7 @@ export class DataService {
   });
 
   // --- Status-class composition over time (stacked area) -------------------
-  readonly statusTrend = computed<{ labels: string[]; series: { key: string; data: number[] }[] }>(() => {
+  readonly statusTrend = computed<{ labels: string[]; starts: number[]; series: { key: string; data: number[] }[] }>(() => {
     const g = this.effectiveGranularity();
     const classes = ['2xx', '3xx', '4xx', '5xx', '1xx', '—'];
     const keys = new Set<number>();
@@ -520,12 +521,13 @@ export class DataService {
     const series = classes
       .map((key) => ({ key, data: sorted.map((k) => per.get(key)!.get(k) || 0) }))
       .filter((s) => s.data.some((v) => v > 0));
-    return { labels, series };
+    return { labels, starts: sorted, series };
   });
 
   // --- Top-N endpoint time series (for endpoint trend chart) ---------------
   readonly endpointTimeSeries = computed<{
     labels: string[];
+    starts: number[];
     series: { id: string; data: number[]; total: number }[];
   }>(() => {
     const g = this.effectiveGranularity();
@@ -537,7 +539,7 @@ export class DataService {
       if (ep && ep !== '—') epCounts.set(ep, (epCounts.get(ep) || 0) + 1);
     }
     const topEps = [...epCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, topN).map(([k]) => k);
-    if (!topEps.length) return { labels: [], series: [] };
+    if (!topEps.length) return { labels: [], starts: [], series: [] };
     const keys = new Set<number>();
     const perEp = new Map<string, Map<number, number>>();
     for (const ep of topEps) perEp.set(ep, new Map());
@@ -554,11 +556,11 @@ export class DataService {
       const m = perEp.get(ep)!;
       return { id: ep, data: sorted.map((k) => m.get(k) || 0), total: [...m.values()].reduce((a, b) => a + b, 0) };
     });
-    return { labels, series };
+    return { labels, starts: sorted, series };
   });
 
   // --- Top-N dic_status time series (for business-status trend chart) -------
-  readonly dicStatusTrendData = computed<{ labels: string[]; series: { key: string; data: number[] }[] }>(() => {
+  readonly dicStatusTrendData = computed<{ labels: string[]; starts: number[]; series: { key: string; data: number[] }[] }>(() => {
     const g = this.effectiveGranularity();
     const topN = 6;
     const dsCounts = new Map<string, number>();
@@ -566,7 +568,7 @@ export class DataService {
       if (r.dicStatus && r.dicStatus !== '—') dsCounts.set(r.dicStatus, (dsCounts.get(r.dicStatus) || 0) + 1);
     }
     const topDs = [...dsCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, topN).map(([k]) => k);
-    if (!topDs.length) return { labels: [], series: [] };
+    if (!topDs.length) return { labels: [], starts: [], series: [] };
     const keys = new Set<number>();
     const per = new Map<string, Map<number, number>>();
     for (const ds of topDs) per.set(ds, new Map());
@@ -583,7 +585,7 @@ export class DataService {
       const m = per.get(ds)!;
       return { key: ds, data: sorted.map((k) => m.get(k) || 0) };
     });
-    return { labels, series };
+    return { labels, starts: sorted, series };
   });
 
   // --- Source ↔ endpoint relationship graph (force-directed cloud) ---------
