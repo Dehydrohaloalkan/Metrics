@@ -99,6 +99,8 @@ export class DataService {
   readonly endpointsLimit = signal(15);
   readonly ipsLimit = signal(15);
   readonly urlsLimit = signal(15);
+  // how many series to overlay in the endpoint-trend chart (0 = all)
+  readonly endpointTrendLimit = signal(10);
 
   // --- Filter state ---------------------------------------------------------
   readonly dateFrom = signal<number | null>(null);
@@ -525,7 +527,8 @@ export class DataService {
     series: { id: string; data: number[]; total: number }[];
   }>(() => {
     const g = this.effectiveGranularity();
-    const topN = 6;
+    const lim = this.endpointTrendLimit();
+    const topN = lim > 0 ? lim : Infinity;
     const epCounts = new Map<string, number>();
     for (const r of this.filtered()) {
       const ep = r.nrDic;

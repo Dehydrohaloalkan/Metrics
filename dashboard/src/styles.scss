@@ -79,6 +79,33 @@ select {
   font-family: inherit;
 }
 
+/* ===== Custom-styled dropdowns ===== */
+/* Drop the native chrome and draw our own caret so selects match the dark UI. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b98a9' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 14px;
+  padding-right: 30px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+select:hover {
+  border-color: var(--accent);
+}
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* Native option list — Chromium (Electron) honours these. */
+select option {
+  background: var(--surface);
+  color: var(--text);
+}
+
 /* ===== Print / PDF export ===== */
 /* Keep the report from "shifting": one predictable 2-column layout, no clipped
    scroll areas, and widgets that never split across a page. */

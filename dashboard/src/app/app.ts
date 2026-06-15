@@ -264,6 +264,17 @@ export class App implements OnInit {
   closeGroups(): void {
     this.groupsModalOpen.set(false);
   }
+
+  // Backdrop click closes the modal — but only when the press *started* on the
+  // backdrop. Otherwise selecting text inside an input and releasing the mouse
+  // outside the card would fire a click on the backdrop and close the modal.
+  private modalPressOnBackdrop = false;
+  onModalMouseDown(ev: MouseEvent): void {
+    this.modalPressOnBackdrop = ev.target === ev.currentTarget;
+  }
+  onModalBackdropClick(ev: MouseEvent): void {
+    if (ev.target === ev.currentTarget && this.modalPressOnBackdrop) this.closeGroups();
+  }
   addGroup(): void {
     const groups = this.draftGroups();
     const color = GROUP_COLORS[groups.length % GROUP_COLORS.length];
@@ -389,52 +400,58 @@ export class App implements OnInit {
     this.toastTimer = setTimeout(() => this.toast.set(null), 2600);
   }
 
-  // ---- cross-filtering: click a chart element to filter the dashboard ----
-  // Cross-filter applies immediately to data.service (bypasses draft), then syncs draft.
+  // ---- cross-filtering: click a chart element to *stage* a filter ----
+  // Clicks add to the draft filters instead of applying immediately, so several
+  // charts can be clicked and then committed together via «Применить».
   crossFilter(kind: CrossKind, value: string): void {
     if (!value || value === 'прочие' || value === '—') return;
     let toastMsg = '';
     switch (kind) {
       case 'level':
-        this.data.toggleSet(this.data.levels, value);
+        this.draftToggleSet(this.draftLevels, value);
         toastMsg = `Уровень: ${value}`;
         break;
       case 'status':
-        this.data.toggleSet(this.data.statusClasses, value);
+        this.draftToggleSet(this.draftStatusClasses, value);
         toastMsg = `HTTP-статус: ${value}`;
         break;
       case 'endpoint':
-        this.data.toggleSet(this.data.endpoints, value);
+        this.draftToggleSet(this.draftEndpoints, value);
         toastMsg = `Эндпоинт: ${value}`;
         break;
       case 'service':
-        this.data.service.set(this.data.service() === value ? '' : value);
+        this.draftService.set(this.draftService() === value ? '' : value);
         toastMsg = `Сервис: ${value}`;
         break;
       case 'ip': {
-        const nv = this.data.ipQuery() === value ? '' : value;
-        this.data.ipQuery.set(nv);
-        toastMsg = nv ? `Фильтр по IP: ${value}` : 'Фильтр по IP снят';
+        const nv = this.draftIpQuery() === value ? '' : value;
+        this.draftIpQuery.set(nv);
+        this.ipInput.set(nv);
+        toastMsg = nv ? `IP: ${value}` : 'Фильтр по IP снят';
         break;
       }
       case 'text': {
-        const nv = this.data.textQuery() === value ? '' : value;
-        this.data.textQuery.set(nv);
+        const nv = this.draftTextQuery() === value ? '' : value;
+        this.draftTextQuery.set(nv);
+        this.textInput.set(nv);
         toastMsg = nv ? `Текст: ${value}` : 'Текстовый фильтр снят';
         break;
       }
       case 'group':
-        this.data.groupFilter.set(this.data.groupFilter() === value ? '' : value);
-        toastMsg = this.data.groupFilter() ? `Группа: ${this.data.groupName(value)}` : 'Фильтр по группе снят';
+        this.draftGroupFilter.set(this.draftGroupFilter() === value ? '' : value);
+        toastMsg = `Группа: ${this.data.groupName(value)}`;
         break;
       case 'dic':
-        this.data.toggleSet(this.data.dicStatuses, value);
+        this.draftToggleSet(this.draftDicStatuses, value);
         toastMsg = `Бизнес-статус: ${value}`;
         break;
     }
-    if (toastMsg) this.showToast('Фильтр применён — ' + toastMsg);
+    if (toastMsg) this.showToast('Добавлено в фильтр — ' + toastMsg + '. Нажмите «Применить»');
+  }
+
+  /** Discard staged (draft) filter changes, reverting to what's currently applied. */
+  cancelDraft(): void {
     this.syncDraftFromService();
-    this.page.set(0);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -770,8 +787,16 @@ export class App implements OnInit {
       this.sourcePieLimit(),
     ),
   );
+  // Endpoint pie can show либо эндпоинты (nr_dic / ND) либо бизнес-статусы (cd_dic_status / CD).
+  readonly endpointPieView = signal<'nd' | 'cd'>(this.settings.get('endpointPieView', 'nd'));
+  setEndpointPieView(v: 'nd' | 'cd'): void {
+    this.endpointPieView.set(v);
+    this.settings.set('endpointPieView', v);
+  }
   readonly endpointPieConfig = computed<ChartConfiguration<'doughnut'>>(() =>
-    this.doughnutFrom(this.data.byEndpoint(), this.endpointPieLimit(), 'endpoint'),
+    this.endpointPieView() === 'cd'
+      ? this.doughnutFrom(this.data.byDicStatus(), this.endpointPieLimit(), 'dic')
+      : this.doughnutFrom(this.data.byEndpoint(), this.endpointPieLimit(), 'endpoint'),
   );
   readonly sourceEndpointsConfig = computed<ChartConfiguration<'bar'>>(() =>
     this.hbarConfig(this.data.sourceEndpoints(), 'Запросы'),
@@ -1061,11 +1086,9 @@ export class App implements OnInit {
     const p = this.themeSvc.palette();
     const ts = this.data.dicStatusTrendData();
     const pr = ts.labels.length > 60 ? 0 : 2;
-    const opts = this.lineOptions(p);
-    opts!.scales = {
-      ...opts!.scales,
-      y: { ...(opts!.scales as Record<string, unknown>)['y'] as object, stacked: true },
-    };
+    // Plain (non-stacked, unfilled) lines so each business status is directly
+    // comparable — the old stacked areas overlapped and exaggerated whichever
+    // series was drawn on top.
     return {
       type: 'line',
       data: {
@@ -1074,16 +1097,15 @@ export class App implements OnInit {
           label: s.key,
           data: s.data,
           borderColor: p.series[i % p.series.length],
-          backgroundColor: p.series[i % p.series.length] + '44',
-          fill: true,
-          stack: 'dic',
-          tension: 0.3,
-          borderWidth: 1.5,
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.35,
+          borderWidth: 2,
           pointRadius: pr,
           pointHoverRadius: 4,
         })),
       },
-      options: opts,
+      options: this.lineOptions(p),
     };
   });
 
@@ -1285,6 +1307,7 @@ export class App implements OnInit {
   ];
 
   readonly limitOptions = [15, 50, 100, 0]; // 0 = все
+  readonly trendLimitOptions = [5, 10, 20, 0]; // 0 = все (для трендов)
   readonly heatBuckets = [60, 30, 15, 10]; // minutes per heatmap column
 
   limitLabel(n: number): string {

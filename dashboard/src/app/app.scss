@@ -296,6 +296,41 @@
 .field select:focus {
   border-color: var(--accent);
 }
+/* Re-apply the custom caret inside this component: the scoped select rules
+   above use the `background` shorthand, which would otherwise wipe the global
+   chevron image. Declaring `background-image` here (not the shorthand) keeps the
+   per-control background-color and restores the caret. */
+.field select,
+.preset-select,
+.srcrow select,
+.seg-select select,
+.pager select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b98a9' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 13px;
+  padding-right: 28px;
+}
+.field select:hover,
+.preset-select:hover,
+.srcrow select:hover,
+.seg-select select:hover,
+.pager select:hover {
+  border-color: var(--accent);
+}
+.field select:focus,
+.preset-select:focus,
+.srcrow select:focus,
+.seg-select select:focus,
+.pager select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -616,6 +651,29 @@
   border-left-color: var(--accent);
 }
 
+/* ===== Pending (staged) filters bar ===== */
+.pending-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 72;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px 9px 16px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  animation: toast-in 0.2s ease;
+}
+.pending-bar__txt {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
 /* ===== Toast ===== */
 .toast {
   position: fixed;
@@ -718,12 +776,14 @@
 .widget__hide-btn {
   pointer-events: all;
   background: rgba(255,255,255,0.25);
+  color: #fff;
   border: none;
   border-radius: 999px;
-  padding: 1px 6px;
-  font-size: 12px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 .widget__hide-btn:hover {
   background: rgba(255,255,255,0.45);

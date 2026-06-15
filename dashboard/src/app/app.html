@@ -342,7 +342,7 @@
 
     @if (editMode()) {
       <div class="edit-hint">
-        <span>🧩 Режим настройки: перетащите блоки для переупорядочивания. Нажмите 👁/🙈 чтобы скрыть или показать блок.</span>
+        <span>🧩 Режим настройки: перетащите блоки для переупорядочивания. Нажмите «Скрыть»/«Показать», чтобы убрать или вернуть блок.</span>
         <div>
           <button class="btn btn--ghost btn--sm" (click)="resetOrder()">Сбросить порядок</button>
           <button class="btn btn--primary btn--sm" (click)="editMode.set(false)">Готово</button>
@@ -372,7 +372,7 @@
                 <button class="widget__hide-btn"
                         (click)="$event.stopPropagation(); toggleWidgetHidden(key)"
                         [title]="hiddenWidgets().has(key) ? 'Показать блок' : 'Скрыть блок'">
-                  {{ hiddenWidgets().has(key) ? '👁' : '🙈' }}
+                  {{ hiddenWidgets().has(key) ? 'Показать' : 'Скрыть' }}
                 </button>
               </div>
             }
@@ -512,10 +512,19 @@
           </app-chart-panel>
         }
         @case ('endpointPie') {
-          <app-chart-panel title="Доли по эндпоинтам" subtitle="nr_dic"
-                           [config]="endpointPieConfig()"
-                           [height]="fs ? fsHeight() : pieHeight(pieSlices(data.byEndpoint().length, endpointPieLimit()))"
-                           [empty]="!data.byEndpoint().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+          <app-chart-panel
+            [title]="endpointPieView() === 'cd' ? 'Доли по бизнес-статусам' : 'Доли по эндпоинтам'"
+            [subtitle]="endpointPieView() === 'cd' ? 'cd_dic_status' : 'nr_dic'"
+            [config]="endpointPieConfig()"
+            [height]="fs ? fsHeight() : pieHeight(pieSlices((endpointPieView() === 'cd' ? data.byDicStatus().length : data.byEndpoint().length), endpointPieLimit()))"
+            [empty]="endpointPieView() === 'cd' ? !data.byDicStatus().length : !data.byEndpoint().length"
+            [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+            <div panelActions class="seg">
+              <button class="seg__btn" [class.seg__btn--on]="endpointPieView() === 'nd'"
+                      (click)="setEndpointPieView('nd')" title="Эндпоинты (nr_dic)">ND</button>
+              <button class="seg__btn" [class.seg__btn--on]="endpointPieView() === 'cd'"
+                      (click)="setEndpointPieView('cd')" title="Бизнес-статусы (cd_dic_status)">CD</button>
+            </div>
             <div panelActions class="seg">
               @for (n of pieLimitOptions; track n) {
                 <button class="seg__btn" [class.seg__btn--on]="endpointPieLimit() === n"
@@ -541,11 +550,18 @@
           </app-chart-panel>
         }
         @case ('endpointTrend') {
-          <app-chart-panel title="Динамика по эндпоинтам (топ-6)"
+          <app-chart-panel title="Динамика по эндпоинтам"
                            [subtitle]="'Гранулярность: ' + data.effectiveGranularity()"
                            [config]="endpointTrendConfig()" [height]="fs ? fsHeight() : 300"
                            [empty]="!data.endpointTimeSeries().series.length"
-                           [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+                           [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+            <div panelActions class="seg">
+              @for (n of trendLimitOptions; track n) {
+                <button class="seg__btn" [class.seg__btn--on]="data.endpointTrendLimit() === n"
+                        (click)="data.endpointTrendLimit.set(n)">{{ limitLabel(n) }}</button>
+              }
+            </div>
+          </app-chart-panel>
         }
         @case ('dicStatusTrend') {
           <app-chart-panel title="Динамика бизнес-статусов (топ-6)"
@@ -704,7 +720,7 @@
 
   <!-- ===== Source-group manager ===== -->
   @if (groupsModalOpen()) {
-    <div class="modal" (click)="closeGroups()">
+    <div class="modal" (mousedown)="onModalMouseDown($event)" (click)="onModalBackdropClick($event)">
       <div class="modal__card" (click)="$event.stopPropagation()">
         <header class="modal__head">
           <h3>👥 Группы источников</h3>
@@ -757,6 +773,14 @@
           <button class="btn btn--primary" (click)="saveGroupsModal()">Сохранить</button>
         </footer>
       </div>
+    </div>
+  }
+
+  @if (data.rows().length && hasDraftChanges()) {
+    <div class="pending-bar">
+      <span class="pending-bar__txt">● Фильтры выбраны, но не применены</span>
+      <button class="btn btn--ghost btn--sm" (click)="cancelDraft()">Отмена</button>
+      <button class="btn btn--primary btn--sm" (click)="commitFilters()">Применить</button>
     </div>
   }
 
