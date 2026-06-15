@@ -21,3 +21,5 @@ Thumbs.db
 app-filters.png
 edit-mode.png
 edit-widgets.png
+
+*.stackdump
