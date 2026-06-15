@@ -1,4 +1,11 @@
 <div class="shell">
+  <!-- Always-visible top progress bar while data is loading -->
+  @if (data.loading()) {
+    <div class="toploader" [class.toploader--determinate]="(data.progress()?.pct || 0) > 0">
+      <div class="toploader__bar" [style.width.%]="(data.progress()?.pct || 0) > 0 ? (data.progress()?.pct || 0) * 100 : null"></div>
+    </div>
+  }
+
   <!-- ===== Top bar ===== -->
   <header class="topbar">
     <div class="brand">
@@ -18,7 +25,10 @@
     <div class="topbar__actions">
       @if (data.isElectron) {
         <button class="btn" (click)="data.pickFile()">📂 Открыть CSV</button>
-        <button class="btn btn--ghost" (click)="data.loadDefault()" title="Перечитать data.csv рядом с приложением">↻</button>
+        <button class="btn btn--ghost" (click)="data.loadDefault()" [disabled]="data.loading()"
+                title="Перечитать data.csv рядом с приложением">
+          <span class="reload-icon" [class.reload-icon--spin]="data.loading()">↻</span>
+        </button>
       } @else {
         <label class="btn">
           📂 Открыть CSV
@@ -102,12 +112,33 @@
         </button>
         <div class="filters__presets">
           @if (data.presets().length) {
-            <select class="preset-select" [ngModel]="''" (ngModelChange)="applyPreset($event)" title="Применить сохранённый фильтр">
-              <option value="">Пресеты…</option>
-              @for (p of data.presets(); track p.name) {
-                <option [value]="p.name">{{ p.name }}</option>
+            <div class="pdrop" [class.pdrop--open]="presetsMenuOpen()">
+              <button class="btn btn--ghost btn--sm" (click)="presetsMenuOpen.set(!presetsMenuOpen())"
+                      title="Сохранённые фильтры">
+                ⭐ Пресеты <span class="cnt">{{ data.presets().length }}</span>
+                <span class="caret">{{ presetsMenuOpen() ? '▲' : '▼' }}</span>
+              </button>
+              @if (presetsMenuOpen()) {
+                <div class="pdrop__menu">
+                  @for (p of data.presets(); track p.name) {
+                    <div class="pitem">
+                      @if (editingPreset() === p.name) {
+                        <input class="pitem__edit" type="text"
+                               [ngModel]="editPresetName()" (ngModelChange)="editPresetName.set($event)"
+                               (keydown.enter)="commitRenamePreset(p.name)" />
+                        <button class="pitem__act" (click)="commitRenamePreset(p.name)" title="Сохранить имя">✓</button>
+                        <button class="pitem__act" (click)="editingPreset.set(null)" title="Отмена">✕</button>
+                      } @else {
+                        <button class="pitem__name" (click)="applyPreset(p.name)" title="Применить">{{ p.name }}</button>
+                        <button class="pitem__act" (click)="updatePreset(p.name)" title="Перезаписать текущими фильтрами">↻</button>
+                        <button class="pitem__act" (click)="startRenamePreset(p.name)" title="Переименовать">✎</button>
+                        <button class="pitem__act pitem__act--del" (click)="removePreset(p.name)" title="Удалить">🗑</button>
+                      }
+                    </div>
+                  }
+                </div>
               }
-            </select>
+            </div>
           }
           @if (data.hasActiveFilters()) {
             <input class="preset-input" type="text" placeholder="имя пресета"
@@ -126,31 +157,31 @@
       @if (filtersOpen()) {
         <div class="filters__grid">
           <!-- date range -->
-          <div class="field">
+          <div class="field" [class.field--pending]="pendingDates()">
             <label>С даты</label>
             <input type="datetime-local" [(ngModel)]="fromInput" />
           </div>
-          <div class="field">
+          <div class="field" [class.field--pending]="pendingDates()">
             <label>По дату</label>
             <input type="datetime-local" [(ngModel)]="toInput" />
           </div>
 
           <!-- text search -->
-          <div class="field field--grow">
+          <div class="field field--grow" [class.field--pending]="pendingText()">
             <label>Поиск (message / url)</label>
             <input type="text" placeholder="например: timeout, R000…"
                    [ngModel]="textInput()" (ngModelChange)="onTextSearch($event)" />
           </div>
 
           <!-- ip search -->
-          <div class="field">
+          <div class="field" [class.field--pending]="pendingIp()">
             <label>IP источника</label>
             <input type="text" placeholder="10.3.…"
                    [ngModel]="ipInput()" (ngModelChange)="onIpSearch($event)" />
           </div>
 
           <!-- name search -->
-          <div class="field">
+          <div class="field" [class.field--pending]="pendingName()">
             <label>Имя источника</label>
             <input type="text" placeholder="Иванов, Отдел…"
                    [ngModel]="nameInput()" (ngModelChange)="onNameSearch($event)" />
@@ -158,33 +189,34 @@
 
           <!-- service -->
           @if (data.allServices().length > 1) {
-            <div class="field">
+            <div class="field" [class.field--pending]="pendingService()">
               <label>Сервис</label>
-              <select [ngModel]="draftService()" (ngModelChange)="draftService.set($event)">
-                <option value="">Все</option>
-                @for (s of data.allServices(); track s) {
-                  <option [value]="s">{{ s }}</option>
-                }
-              </select>
+              <app-select [options]="serviceOptions()" [value]="draftService()"
+                          [pending]="pendingService()"
+                          (valueChange)="draftService.set($event)" placeholder="Все сервисы" />
             </div>
           }
 
           <!-- source group -->
           @if (data.sourceGroups().length) {
-            <div class="field">
+            <div class="field" [class.field--pending]="pendingGroup()">
               <label>Группа источников</label>
-              <select [ngModel]="draftGroupFilter()" (ngModelChange)="draftGroupFilter.set($event)">
-                <option value="">Все</option>
-                @for (g of data.sourceGroups(); track g.id) {
-                  <option [value]="g.id">{{ g.name }}</option>
-                }
-                <option [value]="data.UNGROUPED">Без группы</option>
-              </select>
+              <app-select [options]="groupFilterOptions()" [value]="draftGroupFilter()"
+                          [pending]="pendingGroup()"
+                          (valueChange)="draftGroupFilter.set($event)" placeholder="Все группы" />
             </div>
           }
 
+          <!-- pick a known source -->
+          <div class="field" [class.field--pending]="pendingIp()">
+            <label>Выбрать источник</label>
+            <app-select [options]="sourceOptions()" [value]="draftIpQuery()" [searchable]="true"
+                        [pending]="pendingIp()" searchPlaceholder="IP или имя…"
+                        placeholder="— любой источник —" (valueChange)="pickSource($event)" />
+          </div>
+
           <!-- levels -->
-          <div class="field field--chips">
+          <div class="field field--chips" [class.field--pending]="pendingLevels()">
             <label>Уровень</label>
             <div class="chips">
               @for (lv of data.allLevels(); track lv) {
@@ -195,7 +227,7 @@
           </div>
 
           <!-- status classes -->
-          <div class="field field--chips">
+          <div class="field field--chips" [class.field--pending]="pendingStatus()">
             <label>HTTP-статус</label>
             <div class="chips">
               @for (sc of data.allStatusClasses(); track sc) {
@@ -207,7 +239,7 @@
 
           <!-- business statuses -->
           @if (data.allDicStatuses().length > 1) {
-            <div class="field field--chips">
+            <div class="field field--chips" [class.field--pending]="pendingDic()">
               <label>Бизнес-статус (cd_dic_status)</label>
               <div class="chips chips--scroll">
                 @for (ds of data.allDicStatuses(); track ds) {
@@ -220,7 +252,7 @@
 
           <!-- endpoints -->
           @if (data.allEndpoints().length > 1) {
-            <div class="field field--chips field--grow">
+            <div class="field field--chips field--grow" [class.field--pending]="pendingEndpoints()">
               <label>Эндпоинт (nr_dic)</label>
               <div class="chips chips--scroll">
                 @for (ep of data.allEndpoints(); track ep) {
@@ -232,7 +264,7 @@
           }
 
           <!-- only errors -->
-          <div class="field field--chips">
+          <div class="field field--chips" [class.field--pending]="pendingErrors()">
             <label>Быстрый</label>
             <button class="chip chip--toggle" [class.chip--on]="draftOnlyErrors()"
                     (click)="draftOnlyErrors.set(!draftOnlyErrors())">⚠ Только ошибки</button>
@@ -541,11 +573,9 @@
                            [empty]="!data.sourceEndpoints().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
             <div panelActions class="seg-select">
               <span class="muted">Источник:</span>
-              <select [ngModel]="data.activeSource()" (ngModelChange)="data.selectedSource.set($event)">
-                @for (s of data.bySource(); track s.key) {
-                  <option [value]="s.key">{{ data.sourceLabel(s.key) }} — {{ fmtNum(s.count) }}</option>
-                }
-              </select>
+              <app-select width="240px" [searchable]="true" searchPlaceholder="IP или имя…"
+                          [options]="drilldownOptions()" [value]="data.activeSource()"
+                          (valueChange)="data.selectedSource.set($event)" />
             </div>
           </app-chart-panel>
         }
@@ -702,12 +732,8 @@
       <footer class="pager">
         <div class="pager__size">
           Строк на странице:
-          <select [ngModel]="pageSize()" (ngModelChange)="pageSize.set(+$event); page.set(0)">
-            <option [value]="25">25</option>
-            <option [value]="50">50</option>
-            <option [value]="100">100</option>
-            <option [value]="250">250</option>
-          </select>
+          <app-select width="92px" [options]="pageSizeOptions" [value]="pageSize() + ''"
+                      (valueChange)="pageSize.set(+$event); page.set(0)" />
         </div>
         <div class="pager__nav">
           <button class="btn btn--ghost btn--sm" (click)="prevPage()" [disabled]="page() === 0">‹ Назад</button>

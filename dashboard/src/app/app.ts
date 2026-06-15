@@ -17,6 +17,7 @@ import { ChartPanelComponent } from './components/chart-panel.component';
 import { HeatmapComponent } from './components/heatmap.component';
 import { CountComponent } from './components/count.component';
 import { SparklineComponent } from './components/sparkline.component';
+import { SelectComponent, SelectOption } from './components/select.component';
 import { LogRow } from './models';
 
 type SortKey = 'date' | 'level' | 'service' | 'nrDic' | 'httpCode' | 'ip';
@@ -33,6 +34,7 @@ type CrossKind = 'level' | 'status' | 'endpoint' | 'service' | 'ip' | 'text' | '
     HeatmapComponent,
     CountComponent,
     SparklineComponent,
+    SelectComponent,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
@@ -210,10 +212,24 @@ export class App implements OnInit {
 
   @HostListener('document:keydown', ['$event'])
   onKey(ev: KeyboardEvent): void {
+    if (ev.key === 'Escape' && this.presetsMenuOpen()) {
+      this.presetsMenuOpen.set(false);
+      this.editingPreset.set(null);
+      return;
+    }
     if (!this.focusedWidget()) return;
     if (ev.key === 'Escape') this.closeFocus();
     else if (ev.key === 'ArrowRight') this.focusStep(1);
     else if (ev.key === 'ArrowLeft') this.focusStep(-1);
+  }
+
+  // Close the presets popover on any outside click.
+  @HostListener('document:click', ['$event'])
+  onDocClick(ev: MouseEvent): void {
+    if (this.presetsMenuOpen() && !(ev.target as HTMLElement).closest('.pdrop')) {
+      this.presetsMenuOpen.set(false);
+      this.editingPreset.set(null);
+    }
   }
 
   onDragStart(ev: DragEvent, key: string): void {
@@ -321,6 +337,10 @@ export class App implements OnInit {
 
   // ===================== Saved filter presets =====================
   readonly presetName = signal('');
+  readonly presetsMenuOpen = signal(false);
+  readonly editingPreset = signal<string | null>(null);
+  readonly editPresetName = signal('');
+
   saveCurrentPreset(): void {
     const name = this.presetName().trim();
     if (!name) return;
@@ -332,7 +352,90 @@ export class App implements OnInit {
     this.data.applyPreset(name);
     this.syncDraftFromService();
     this.page.set(0);
+    this.presetsMenuOpen.set(false);
   }
+  /** Overwrite a preset with the currently-applied filters. */
+  updatePreset(name: string): void {
+    this.data.updatePreset(name);
+    this.showToast(`Пресет «${name}» обновлён`);
+  }
+  removePreset(name: string): void {
+    this.data.deletePreset(name);
+    if (this.editingPreset() === name) this.editingPreset.set(null);
+  }
+  startRenamePreset(name: string): void {
+    this.editingPreset.set(name);
+    this.editPresetName.set(name);
+  }
+  commitRenamePreset(oldName: string): void {
+    this.data.renamePreset(oldName, this.editPresetName());
+    this.editingPreset.set(null);
+  }
+
+  // ===================== Dropdown option lists =====================
+  readonly serviceOptions = computed<SelectOption[]>(() => [
+    { value: '', label: 'Все сервисы' },
+    ...this.data.allServices().map((s) => ({ value: s, label: s })),
+  ]);
+  readonly groupFilterOptions = computed<SelectOption[]>(() => [
+    { value: '', label: 'Все группы' },
+    ...this.data.sourceGroups().map((g) => ({ value: g.id, label: g.name, color: g.color })),
+    { value: this.data.UNGROUPED, label: 'Без группы' },
+  ]);
+  /** Searchable list of every known source (name + IP) for the filter picker. */
+  readonly sourceOptions = computed<SelectOption[]>(() => [
+    { value: '', label: '— любой источник —' },
+    ...this.data.allSources().map((s) => ({
+      value: s.key,
+      label: this.displaySource(s.key),
+      sub: `${s.key} · ${this.fmtNum(s.count)}`,
+    })),
+  ]);
+  readonly drilldownOptions = computed<SelectOption[]>(() =>
+    this.data.bySource().map((s) => ({
+      value: s.key,
+      label: this.data.sourceLabel(s.key),
+      sub: this.fmtNum(s.count),
+    })),
+  );
+  readonly pageSizeOptions: SelectOption[] = [
+    { value: '25', label: '25' },
+    { value: '50', label: '50' },
+    { value: '100', label: '100' },
+    { value: '250', label: '250' },
+  ];
+
+  /** Pick an exact source from the dropdown → stage it as the IP filter. */
+  pickSource(ip: string): void {
+    this.draftIpQuery.set(ip);
+    this.ipInput.set(ip);
+    this.showToast(
+      ip
+        ? `Добавлено в фильтр — источник: ${this.displaySource(ip)}. Нажмите «Применить»`
+        : 'Фильтр по источнику снят',
+    );
+  }
+
+  // ===================== Unapplied (pending) filter markers =====================
+  // True when a control's staged value differs from what's currently applied.
+  private setEq(a: Set<string>, b: Set<string>): boolean {
+    if (a.size !== b.size) return false;
+    for (const v of a) if (!b.has(v)) return false;
+    return true;
+  }
+  readonly pendingDates = computed(
+    () => this.draftFrom() !== this.data.dateFrom() || this.draftTo() !== this.data.dateTo(),
+  );
+  readonly pendingService = computed(() => this.draftService() !== this.data.service());
+  readonly pendingGroup = computed(() => this.draftGroupFilter() !== this.data.groupFilter());
+  readonly pendingIp = computed(() => this.draftIpQuery() !== this.data.ipQuery());
+  readonly pendingName = computed(() => this.draftNameQuery() !== this.data.nameQuery());
+  readonly pendingText = computed(() => this.draftTextQuery() !== this.data.textQuery());
+  readonly pendingErrors = computed(() => this.draftOnlyErrors() !== this.data.onlyErrors());
+  readonly pendingLevels = computed(() => !this.setEq(this.draftLevels(), this.data.levels()));
+  readonly pendingStatus = computed(() => !this.setEq(this.draftStatusClasses(), this.data.statusClasses()));
+  readonly pendingDic = computed(() => !this.setEq(this.draftDicStatuses(), this.data.dicStatuses()));
+  readonly pendingEndpoints = computed(() => !this.setEq(this.draftEndpoints(), this.data.endpoints()));
 
   // table state
   readonly sortKey = signal<SortKey>('date');
@@ -454,14 +557,15 @@ export class App implements OnInit {
     this.syncDraftFromService();
   }
 
+  // Generic "click an element → run handler(index)" wiring + pointer cursor.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private clickable(options: any, keys: () => string[], kind: CrossKind): any {
+  private withClick(options: any, handler: (i: number) => void, byDataset = false): any {
     return {
       ...options,
-      onClick: (_e: unknown, els: { index: number }[]) => {
+      onClick: (_e: unknown, els: { index: number; datasetIndex: number }[]) => {
         if (els.length) {
-          const k = keys()[els[0].index];
-          if (k != null) this.crossFilter(kind, k);
+          const e = els[0];
+          handler(byDataset ? e.datasetIndex : e.index);
         }
       },
       onHover: (e: { native?: { target?: HTMLElement } }, els: unknown[]) => {
@@ -469,6 +573,42 @@ export class App implements OnInit {
         if (t) t.style.cursor = els.length ? 'pointer' : 'default';
       },
     };
+  }
+
+  // Click a bar/slice (indexed by element index) → cross-filter.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private clickable(options: any, keys: () => string[], kind: CrossKind): any {
+    return this.withClick(options, (i) => {
+      const k = keys()[i];
+      if (k != null) this.crossFilter(kind, k);
+    });
+  }
+
+  // Click a line/series (indexed by datasetIndex) → cross-filter. Used by the
+  // multi-series trend charts, which run in "nearest" hover mode.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private clickableDataset(options: any, keys: () => string[], kind: CrossKind): any {
+    return this.withClick(
+      options,
+      (i) => {
+        const k = keys()[i];
+        if (k != null) this.crossFilter(kind, k);
+      },
+      true,
+    );
+  }
+
+  /** Click a point on the time-series → stage a date-range filter for that bucket. */
+  onTimeBucketClick(i: number): void {
+    const b = this.data.timeSeries();
+    const bucket = b[i];
+    if (!bucket) return;
+    const span = b.length > 1 ? b[1].start - b[0].start : 36e5;
+    const start = bucket.start;
+    const end = b[i + 1]?.start ?? start + span;
+    this.draftFrom.set(start);
+    this.draftTo.set(end - 1);
+    this.showToast('Добавлено в фильтр — период: ' + bucket.label + '. Нажмите «Применить»');
   }
 
   // ---- draft filter commit / sync ----
@@ -638,7 +778,7 @@ export class App implements OnInit {
     const p = this.themeSvc.palette();
     const buckets = this.data.timeSeries();
     const pr = buckets.length > 60 ? 0 : 2;
-    const opts = this.lineOptions(p);
+    const opts = this.withClick(this.lineOptions(p), (i) => this.onTimeBucketClick(i));
     // add a right-hand axis for the error-rate %
     opts!.scales = {
       ...opts!.scales,
@@ -646,7 +786,7 @@ export class App implements OnInit {
         position: 'right',
         beginAtZero: true,
         suggestedMax: 100,
-        ticks: { color: p.textMuted, callback: (v) => v + '%' },
+        ticks: { color: p.textMuted, callback: (v: number | string) => v + '%' },
         grid: { drawOnChartArea: false },
       },
     };
@@ -757,7 +897,8 @@ export class App implements OnInit {
           },
         ],
       },
-      options: this.barOptions(p),
+      // Clicking an HTTP code filters by its status class (e.g. 404 → 4xx).
+      options: this.clickable(this.barOptions(p), () => items.map((i) => (i.key[0] ?? '') + 'xx'), 'status'),
     };
   });
 
@@ -973,7 +1114,7 @@ export class App implements OnInit {
           pointHoverRadius: 4,
         })),
       },
-      options: this.lineOptions(p),
+      options: this.clickableDataset(this.lineOptions(p, true), () => ts.series.map((s) => s.id), 'group'),
     };
   });
 
@@ -995,7 +1136,7 @@ export class App implements OnInit {
         position: 'right',
         beginAtZero: true,
         max: 100,
-        ticks: { color: p.textMuted, callback: (v) => v + '%' },
+        ticks: { color: p.textMuted, callback: (v: number | string) => v + '%' },
         grid: { drawOnChartArea: false },
       },
     };
@@ -1024,7 +1165,7 @@ export class App implements OnInit {
           },
         ],
       },
-      options: opts,
+      options: this.clickable(opts, () => pts.map((i) => i.raw), 'ip'),
     };
   });
 
@@ -1032,7 +1173,7 @@ export class App implements OnInit {
     const p = this.themeSvc.palette();
     const ts = this.data.statusTrend();
     const pr = ts.labels.length > 60 ? 0 : 2;
-    const opts = this.lineOptions(p);
+    const opts = this.lineOptions(p, true);
     opts!.scales = {
       ...opts!.scales,
       y: { ...(opts!.scales as Record<string, unknown>)['y'] as object, stacked: true },
@@ -1054,7 +1195,7 @@ export class App implements OnInit {
           pointHoverRadius: 4,
         })),
       },
-      options: opts,
+      options: this.clickableDataset(opts, () => ts.series.map((s) => s.key), 'status'),
     };
   });
 
@@ -1078,7 +1219,7 @@ export class App implements OnInit {
           pointHoverRadius: 4,
         })),
       },
-      options: this.lineOptions(p),
+      options: this.clickableDataset(this.lineOptions(p, true), () => ts.series.map((s) => s.id), 'endpoint'),
     };
   });
 
@@ -1105,7 +1246,7 @@ export class App implements OnInit {
           pointHoverRadius: 4,
         })),
       },
-      options: this.lineOptions(p),
+      options: this.clickableDataset(this.lineOptions(p, true), () => ts.series.map((s) => s.key), 'dic'),
     };
   });
 
@@ -1192,12 +1333,19 @@ export class App implements OnInit {
     };
   }
 
-  private lineOptions(p: ReturnType<ThemeService['palette']>): ChartConfiguration<'line'>['options'] {
+  private lineOptions(
+    p: ReturnType<ThemeService['palette']>,
+    compact = false,
+  ): ChartConfiguration<'line'>['options'] {
     return {
       responsive: true,
       maintainAspectRatio: false,
       animation: { duration: 650, easing: 'easeOutQuart' },
-      interaction: { mode: 'index', intersect: false },
+      // "nearest" keeps the tooltip to a single series so it doesn't blanket the
+      // chart — important for the many-line trend charts.
+      interaction: compact
+        ? { mode: 'nearest', intersect: false }
+        : { mode: 'index', intersect: false },
       plugins: {
         legend: { labels: { color: p.text, usePointStyle: true, boxWidth: 8 } },
         tooltip: this.tooltipStyle(p),
@@ -1220,7 +1368,8 @@ export class App implements OnInit {
       plugins: { legend: { display: false }, tooltip: this.tooltipStyle(p) },
       scales: {
         x: { beginAtZero: true, ticks: { color: p.textMuted, precision: 0 }, grid: { color: p.grid } },
-        y: { ticks: { color: p.textMuted }, grid: { display: false } },
+        // autoSkip:false → every category label is drawn (don't silently drop rows).
+        y: { ticks: { color: p.textMuted, autoSkip: false }, grid: { display: false } },
       },
     };
   }
@@ -1248,8 +1397,16 @@ export class App implements OnInit {
       bodyColor: p.text,
       borderColor: p.grid,
       borderWidth: 1,
-      padding: 10,
+      padding: 8,
       cornerRadius: 8,
+      // Smaller footprint + point-style swatches so the box covers less data.
+      usePointStyle: true,
+      boxWidth: 8,
+      boxHeight: 8,
+      boxPadding: 4,
+      caretSize: 5,
+      titleFont: { size: 11.5 },
+      bodyFont: { size: 11.5 },
     };
   }
 
@@ -1314,9 +1471,10 @@ export class App implements OnInit {
     return n === 0 ? 'Все' : String(n);
   }
 
-  /** Height for a horizontal "top" chart so every bar stays readable. */
+  /** Height for a horizontal "top" chart so every bar (and its possibly
+   *  two-line label) stays readable without overlapping its neighbour. */
   barHeight(n: number): number {
-    return Math.max(220, n * 26 + 56);
+    return Math.max(220, n * 34 + 60);
   }
 
   setGranularity(g: Granularity): void {

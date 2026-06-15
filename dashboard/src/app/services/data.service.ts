@@ -22,6 +22,8 @@ export interface Bucket {
   label: string;
   total: number;
   errors: number;
+  /** Epoch ms of the bucket start (for click-to-filter by time range). */
+  start: number;
 }
 
 export interface Counted {
@@ -370,7 +372,7 @@ export class DataService {
       const key = this.bucketKey(r.date!, g);
       let b = map.get(key);
       if (!b) {
-        b = { label: this.bucketLabel(key, g), total: 0, errors: 0 };
+        b = { label: this.bucketLabel(key, g), total: 0, errors: 0, start: key };
         map.set(key, b);
       }
       b.total++;
@@ -488,13 +490,13 @@ export class DataService {
   });
 
   // --- Pareto (source concentration) ---------------------------------------
-  readonly sourcePareto = computed<{ points: { key: string; count: number; cumPct: number }[]; total: number }>(() => {
+  readonly sourcePareto = computed<{ points: { key: string; raw: string; count: number; cumPct: number }[]; total: number }>(() => {
     const src = this.bySource().filter((s) => s.key !== '—');
     const total = src.reduce((s, i) => s + i.count, 0);
     let cum = 0;
     const points = src.slice(0, 20).map((s) => {
       cum += s.count;
-      return { key: this.sourceLabel(s.key), count: s.count, cumPct: total ? (cum / total) * 100 : 0 };
+      return { key: this.sourceLabel(s.key), raw: s.key, count: s.count, cumPct: total ? (cum / total) * 100 : 0 };
     });
     return { points, total };
   });
@@ -936,6 +938,22 @@ export class DataService {
 
   deletePreset(name: string): void {
     const next = this.presets().filter((p) => p.name !== name);
+    this.presets.set(next);
+    this.settings.set('filterPresets', next);
+  }
+
+  /** Overwrite a preset's saved filters with the currently-applied state. */
+  updatePreset(name: string): void {
+    if (!this.presets().some((p) => p.name === name)) return;
+    const next = this.presets().map((p) => (p.name === name ? { name, state: this.captureState() } : p));
+    this.presets.set(next);
+    this.settings.set('filterPresets', next);
+  }
+
+  renamePreset(oldName: string, newName: string): void {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) return;
+    const next = this.presets().map((p) => (p.name === oldName ? { ...p, name: trimmed } : p));
     this.presets.set(next);
     this.settings.set('filterPresets', next);
   }
