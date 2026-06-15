@@ -110,6 +110,7 @@ export class DataService {
   readonly dicStatuses = signal<Set<string>>(new Set());
   readonly groupFilter = signal<string>(''); // '' = all groups; or a group id / UNGROUPED
   readonly ipQuery = signal<string>('');
+  readonly nameQuery = signal<string>('');
   readonly textQuery = signal<string>('');
   readonly onlyErrors = signal<boolean>(false);
   readonly granularity = signal<Granularity>('auto');
@@ -194,6 +195,7 @@ export class DataService {
     const grp = this.groupFilter();
     const gi = grp ? this.groupIndex() : null;
     const ip = this.ipQuery().trim().toLowerCase();
+    const name = this.nameQuery().trim().toLowerCase();
     const text = this.textQuery().trim().toLowerCase();
     const onlyErr = this.onlyErrors();
 
@@ -208,9 +210,10 @@ export class DataService {
         if (id !== grp) return false;
       }
       if (onlyErr && !r.isError) return false;
-      if (ip) {
-        const name = this.resolveName(r.ip).toLowerCase();
-        if (!r.ip.toLowerCase().includes(ip) && !name.includes(ip)) return false;
+      if (ip && !r.ip.toLowerCase().includes(ip)) return false;
+      if (name) {
+        const resolvedName = this.resolveName(r.ip).toLowerCase();
+        if (!resolvedName.includes(name)) return false;
       }
       if (text) {
         const hay = (r.message + ' ' + r.url + ' ' + r.exception + ' ' + r.logger + ' ' + r.nrDic).toLowerCase();
@@ -242,6 +245,7 @@ export class DataService {
       this.dicStatuses().size > 0 ||
       this.groupFilter() !== '' ||
       this.ipQuery().trim() !== '' ||
+      this.nameQuery().trim() !== '' ||
       this.textQuery().trim() !== '' ||
       this.onlyErrors(),
   );
@@ -512,6 +516,68 @@ export class DataService {
     const series = classes
       .map((key) => ({ key, data: sorted.map((k) => per.get(key)!.get(k) || 0) }))
       .filter((s) => s.data.some((v) => v > 0));
+    return { labels, series };
+  });
+
+  // --- Top-N endpoint time series (for endpoint trend chart) ---------------
+  readonly endpointTimeSeries = computed<{
+    labels: string[];
+    series: { id: string; data: number[]; total: number }[];
+  }>(() => {
+    const g = this.effectiveGranularity();
+    const topN = 6;
+    const epCounts = new Map<string, number>();
+    for (const r of this.filtered()) {
+      const ep = r.nrDic;
+      if (ep && ep !== '—') epCounts.set(ep, (epCounts.get(ep) || 0) + 1);
+    }
+    const topEps = [...epCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, topN).map(([k]) => k);
+    if (!topEps.length) return { labels: [], series: [] };
+    const keys = new Set<number>();
+    const perEp = new Map<string, Map<number, number>>();
+    for (const ep of topEps) perEp.set(ep, new Map());
+    for (const r of this.filtered()) {
+      if (!topEps.includes(r.nrDic) || isNaN(r.ts)) continue;
+      const bk = this.bucketKey(r.date!, g);
+      keys.add(bk);
+      const m = perEp.get(r.nrDic)!;
+      m.set(bk, (m.get(bk) || 0) + 1);
+    }
+    const sorted = [...keys].sort((a, b) => a - b);
+    const labels = sorted.map((k) => this.bucketLabel(k, g));
+    const series = topEps.map((ep) => {
+      const m = perEp.get(ep)!;
+      return { id: ep, data: sorted.map((k) => m.get(k) || 0), total: [...m.values()].reduce((a, b) => a + b, 0) };
+    });
+    return { labels, series };
+  });
+
+  // --- Top-N dic_status time series (for business-status trend chart) -------
+  readonly dicStatusTrendData = computed<{ labels: string[]; series: { key: string; data: number[] }[] }>(() => {
+    const g = this.effectiveGranularity();
+    const topN = 6;
+    const dsCounts = new Map<string, number>();
+    for (const r of this.filtered()) {
+      if (r.dicStatus && r.dicStatus !== '—') dsCounts.set(r.dicStatus, (dsCounts.get(r.dicStatus) || 0) + 1);
+    }
+    const topDs = [...dsCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, topN).map(([k]) => k);
+    if (!topDs.length) return { labels: [], series: [] };
+    const keys = new Set<number>();
+    const per = new Map<string, Map<number, number>>();
+    for (const ds of topDs) per.set(ds, new Map());
+    for (const r of this.filtered()) {
+      if (!r.dicStatus || r.dicStatus === '—' || !topDs.includes(r.dicStatus) || isNaN(r.ts)) continue;
+      const bk = this.bucketKey(r.date!, g);
+      keys.add(bk);
+      const m = per.get(r.dicStatus)!;
+      m.set(bk, (m.get(bk) || 0) + 1);
+    }
+    const sorted = [...keys].sort((a, b) => a - b);
+    const labels = sorted.map((k) => this.bucketLabel(k, g));
+    const series = topDs.map((ds) => {
+      const m = per.get(ds)!;
+      return { key: ds, data: sorted.map((k) => m.get(k) || 0) };
+    });
     return { labels, series };
   });
 
@@ -814,6 +880,7 @@ export class DataService {
     this.dicStatuses.set(new Set());
     this.groupFilter.set('');
     this.ipQuery.set('');
+    this.nameQuery.set('');
     this.textQuery.set('');
     this.onlyErrors.set(false);
     this.selectedSource.set('');
@@ -831,6 +898,7 @@ export class DataService {
       dicStatuses: [...this.dicStatuses()],
       groupFilter: this.groupFilter(),
       ipQuery: this.ipQuery(),
+      nameQuery: this.nameQuery(),
       textQuery: this.textQuery(),
       onlyErrors: this.onlyErrors(),
     };
@@ -858,6 +926,7 @@ export class DataService {
     this.dicStatuses.set(new Set(arr(s['dicStatuses'])));
     this.groupFilter.set((s['groupFilter'] as string) ?? '');
     this.ipQuery.set((s['ipQuery'] as string) ?? '');
+    this.nameQuery.set((s['nameQuery'] as string) ?? '');
     this.textQuery.set((s['textQuery'] as string) ?? '');
     this.onlyErrors.set(!!s['onlyErrors']);
   }

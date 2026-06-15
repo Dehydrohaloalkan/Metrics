@@ -42,13 +42,28 @@ export class App implements OnInit {
   readonly themeSvc = inject(ThemeService);
   private readonly settings = inject(SettingsService);
 
-  // ---- dashboard layout (reorderable widgets) ----
+  // ---- dashboard layout (reorderable + hideable widgets) ----
   readonly editMode = signal(false);
   readonly defaultWidgets = [
     'timeseries', 'groups', 'groupTrend', 'statusTrend', 'pareto',
     'levels', 'status', 'dicStatus', 'endpoints', 'ips', 'urls',
-    'httpcodes', 'service', 'sourcePie', 'endpointPie', 'drilldown', 'heatmap',
+    'httpcodes', 'service', 'sourcePie', 'endpointPie', 'drilldown',
+    'endpointTrend', 'dicStatusTrend', 'heatmap',
   ];
+  readonly hiddenWidgets = signal<Set<string>>(this.loadHidden());
+
+  private loadHidden(): Set<string> {
+    const saved = this.settings.get<string[]>('hiddenWidgets', []);
+    return new Set(Array.isArray(saved) ? saved : []);
+  }
+
+  toggleWidgetHidden(key: string): void {
+    const next = new Set(this.hiddenWidgets());
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    this.hiddenWidgets.set(next);
+    this.settings.set('hiddenWidgets', [...next]);
+  }
   readonly widgets = signal<string[]>(this.loadOrder());
   readonly dragKey = signal<string | null>(null);
   readonly overKey = signal<string | null>(null);
@@ -77,6 +92,10 @@ export class App implements OnInit {
         return this.data.sourcePareto().points.length > 1;
       case 'statusTrend':
         return this.data.statusTrend().series.length > 0;
+      case 'endpointTrend':
+        return this.data.endpointTimeSeries().series.length > 0;
+      case 'dicStatusTrend':
+        return this.data.dicStatusTrendData().series.length > 1;
       default:
         return true;
     }
@@ -85,7 +104,8 @@ export class App implements OnInit {
   widgetSpan(key: string): string {
     if (key === 'heatmap') return 'span-3';
     if (key === 'timeseries' || key === 'urls' || key === 'drilldown' ||
-        key === 'groupTrend' || key === 'statusTrend' || key === 'pareto') return 'span-2';
+        key === 'groupTrend' || key === 'statusTrend' || key === 'pareto' ||
+        key === 'endpointTrend' || key === 'dicStatusTrend') return 'span-2';
     // pies widen when showing many slices so legends fit
     if (key === 'sourcePie') return this.sourcePieLimit() === 10 ? '' : 'span-2';
     if (key === 'endpointPie') return this.endpointPieLimit() === 10 ? '' : 'span-2';
@@ -123,6 +143,8 @@ export class App implements OnInit {
     sourcePie: 'Доли по источникам / группам',
     endpointPie: 'Доли по эндпоинтам',
     drilldown: 'Эндпоинты выбранного источника',
+    endpointTrend: 'Динамика по эндпоинтам (топ-6)',
+    dicStatusTrend: 'Динамика бизнес-статусов',
     heatmap: 'Активность по времени',
   };
 
@@ -297,6 +319,7 @@ export class App implements OnInit {
   applyPreset(name: string): void {
     if (!name) return;
     this.data.applyPreset(name);
+    this.syncDraftFromService();
     this.page.set(0);
   }
 
@@ -310,11 +333,40 @@ export class App implements OnInit {
   // ui state
   readonly filtersOpen = signal(true);
 
-  // debounced search inputs (avoid recomputing everything on each keystroke)
+  // ---- Draft filter state — not applied until commitFilters() ----
+  readonly draftFrom = signal<number | null>(null);
+  readonly draftTo = signal<number | null>(null);
+  readonly draftLevels = signal<Set<string>>(new Set());
+  readonly draftStatusClasses = signal<Set<string>>(new Set());
+  readonly draftService = signal('');
+  readonly draftEndpoints = signal<Set<string>>(new Set());
+  readonly draftDicStatuses = signal<Set<string>>(new Set());
+  readonly draftGroupFilter = signal('');
+  readonly draftIpQuery = signal('');
+  readonly draftNameQuery = signal('');
+  readonly draftTextQuery = signal('');
+  readonly draftOnlyErrors = signal(false);
+
+  // local display bindings for text inputs
   readonly textInput = signal('');
   readonly ipInput = signal('');
-  private textTimer: ReturnType<typeof setTimeout> | undefined;
-  private ipTimer: ReturnType<typeof setTimeout> | undefined;
+  readonly nameInput = signal('');
+
+  readonly hasDraftChanges = computed(() => {
+    const s = (v: Set<string>) => [...v].sort().join('\0');
+    return this.draftFrom() !== this.data.dateFrom()
+      || this.draftTo() !== this.data.dateTo()
+      || s(this.draftLevels()) !== s(this.data.levels())
+      || s(this.draftStatusClasses()) !== s(this.data.statusClasses())
+      || this.draftService() !== this.data.service()
+      || s(this.draftEndpoints()) !== s(this.data.endpoints())
+      || s(this.draftDicStatuses()) !== s(this.data.dicStatuses())
+      || this.draftGroupFilter() !== this.data.groupFilter()
+      || this.draftIpQuery() !== this.data.ipQuery()
+      || this.draftNameQuery() !== this.data.nameQuery()
+      || this.draftTextQuery() !== this.data.textQuery()
+      || this.draftOnlyErrors() !== this.data.onlyErrors();
+  });
 
   // toast (e.g. data auto-reloaded)
   readonly toast = signal<string | null>(null);
@@ -338,40 +390,50 @@ export class App implements OnInit {
   }
 
   // ---- cross-filtering: click a chart element to filter the dashboard ----
+  // Cross-filter applies immediately to data.service (bypasses draft), then syncs draft.
   crossFilter(kind: CrossKind, value: string): void {
     if (!value || value === 'прочие' || value === '—') return;
+    let toastMsg = '';
     switch (kind) {
       case 'level':
         this.data.toggleSet(this.data.levels, value);
+        toastMsg = `Уровень: ${value}`;
         break;
       case 'status':
         this.data.toggleSet(this.data.statusClasses, value);
+        toastMsg = `HTTP-статус: ${value}`;
         break;
       case 'endpoint':
         this.data.toggleSet(this.data.endpoints, value);
+        toastMsg = `Эндпоинт: ${value}`;
         break;
       case 'service':
         this.data.service.set(this.data.service() === value ? '' : value);
+        toastMsg = `Сервис: ${value}`;
         break;
       case 'ip': {
         const nv = this.data.ipQuery() === value ? '' : value;
         this.data.ipQuery.set(nv);
-        this.ipInput.set(nv);
+        toastMsg = nv ? `Фильтр по IP: ${value}` : 'Фильтр по IP снят';
         break;
       }
       case 'text': {
         const nv = this.data.textQuery() === value ? '' : value;
         this.data.textQuery.set(nv);
-        this.textInput.set(nv);
+        toastMsg = nv ? `Текст: ${value}` : 'Текстовый фильтр снят';
         break;
       }
       case 'group':
         this.data.groupFilter.set(this.data.groupFilter() === value ? '' : value);
+        toastMsg = this.data.groupFilter() ? `Группа: ${this.data.groupName(value)}` : 'Фильтр по группе снят';
         break;
       case 'dic':
         this.data.toggleSet(this.data.dicStatuses, value);
+        toastMsg = `Бизнес-статус: ${value}`;
         break;
     }
+    if (toastMsg) this.showToast('Фильтр применён — ' + toastMsg);
+    this.syncDraftFromService();
     this.page.set(0);
   }
 
@@ -392,62 +454,94 @@ export class App implements OnInit {
     };
   }
 
-  // ---- date input bindings (string <-> epoch) ----
+  // ---- draft filter commit / sync ----
+  commitFilters(): void {
+    this.data.dateFrom.set(this.draftFrom());
+    this.data.dateTo.set(this.draftTo());
+    this.data.levels.set(new Set(this.draftLevels()));
+    this.data.statusClasses.set(new Set(this.draftStatusClasses()));
+    this.data.service.set(this.draftService());
+    this.data.endpoints.set(new Set(this.draftEndpoints()));
+    this.data.dicStatuses.set(new Set(this.draftDicStatuses()));
+    this.data.groupFilter.set(this.draftGroupFilter());
+    this.data.ipQuery.set(this.draftIpQuery());
+    this.data.nameQuery.set(this.draftNameQuery());
+    this.data.textQuery.set(this.draftTextQuery());
+    this.data.onlyErrors.set(this.draftOnlyErrors());
+    this.page.set(0);
+  }
+
+  syncDraftFromService(): void {
+    this.draftFrom.set(this.data.dateFrom());
+    this.draftTo.set(this.data.dateTo());
+    this.draftLevels.set(new Set(this.data.levels()));
+    this.draftStatusClasses.set(new Set(this.data.statusClasses()));
+    this.draftService.set(this.data.service());
+    this.draftEndpoints.set(new Set(this.data.endpoints()));
+    this.draftDicStatuses.set(new Set(this.data.dicStatuses()));
+    this.draftGroupFilter.set(this.data.groupFilter());
+    this.draftIpQuery.set(this.data.ipQuery());
+    this.draftNameQuery.set(this.data.nameQuery());
+    this.draftTextQuery.set(this.data.textQuery());
+    this.draftOnlyErrors.set(this.data.onlyErrors());
+    this.textInput.set(this.data.textQuery());
+    this.ipInput.set(this.data.ipQuery());
+    this.nameInput.set(this.data.nameQuery());
+  }
+
+  draftToggleSet(sig: ReturnType<typeof signal<Set<string>>>, value: string): void {
+    const next = new Set(sig());
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    sig.set(next);
+  }
+
+  // ---- date input bindings (string <-> draft epoch) ----
   get fromInput(): string {
-    return this.toLocalInput(this.data.dateFrom());
+    return this.toLocalInput(this.draftFrom());
   }
   set fromInput(v: string) {
-    this.data.dateFrom.set(v ? new Date(v).getTime() : null);
-    this.page.set(0);
+    this.draftFrom.set(v ? new Date(v).getTime() : null);
   }
   get toInput(): string {
-    return this.toLocalInput(this.data.dateTo());
+    return this.toLocalInput(this.draftTo());
   }
   set toInput(v: string) {
-    this.data.dateTo.set(v ? new Date(v).getTime() : null);
-    this.page.set(0);
+    this.draftTo.set(v ? new Date(v).getTime() : null);
   }
 
   quickRange(hours: number | 'all'): void {
     if (hours === 'all') {
       this.data.dateFrom.set(null);
       this.data.dateTo.set(null);
-      this.page.set(0);
-      return;
+    } else {
+      const range = this.data.dataRange();
+      const anchor = range ? range.max : Date.now();
+      this.data.dateTo.set(anchor);
+      this.data.dateFrom.set(anchor - hours * 36e5);
     }
-    const range = this.data.dataRange();
-    const anchor = range ? range.max : Date.now();
-    this.data.dateTo.set(anchor);
-    this.data.dateFrom.set(anchor - hours * 36e5);
-    this.page.set(0);
-  }
-
-  onFilterChange(): void {
+    this.syncDraftFromService();
     this.page.set(0);
   }
 
   onTextSearch(v: string): void {
     this.textInput.set(v);
-    clearTimeout(this.textTimer);
-    this.textTimer = setTimeout(() => {
-      this.data.textQuery.set(v);
-      this.page.set(0);
-    }, 250);
+    this.draftTextQuery.set(v);
   }
 
   onIpSearch(v: string): void {
     this.ipInput.set(v);
-    clearTimeout(this.ipTimer);
-    this.ipTimer = setTimeout(() => {
-      this.data.ipQuery.set(v);
-      this.page.set(0);
-    }, 250);
+    this.draftIpQuery.set(v);
+  }
+
+  onNameSearch(v: string): void {
+    this.nameInput.set(v);
+    this.draftNameQuery.set(v);
   }
 
   resetAll(): void {
-    this.textInput.set('');
-    this.ipInput.set('');
     this.data.resetFilters();
+    this.syncDraftFromService();
     this.page.set(0);
   }
 
@@ -939,7 +1033,79 @@ export class App implements OnInit {
     };
   });
 
+  readonly endpointTrendConfig = computed<ChartConfiguration<'line'>>(() => {
+    const p = this.themeSvc.palette();
+    const ts = this.data.endpointTimeSeries();
+    const pr = ts.labels.length > 60 ? 0 : 2;
+    return {
+      type: 'line',
+      data: {
+        labels: ts.labels,
+        datasets: ts.series.map((s, i) => ({
+          label: s.id,
+          data: s.data,
+          borderColor: p.series[i % p.series.length],
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.35,
+          borderWidth: 2,
+          pointRadius: pr,
+          pointHoverRadius: 4,
+        })),
+      },
+      options: this.lineOptions(p),
+    };
+  });
+
+  readonly dicStatusTrendConfig = computed<ChartConfiguration<'line'>>(() => {
+    const p = this.themeSvc.palette();
+    const ts = this.data.dicStatusTrendData();
+    const pr = ts.labels.length > 60 ? 0 : 2;
+    const opts = this.lineOptions(p);
+    opts!.scales = {
+      ...opts!.scales,
+      y: { ...(opts!.scales as Record<string, unknown>)['y'] as object, stacked: true },
+    };
+    return {
+      type: 'line',
+      data: {
+        labels: ts.labels,
+        datasets: ts.series.map((s, i) => ({
+          label: s.key,
+          data: s.data,
+          borderColor: p.series[i % p.series.length],
+          backgroundColor: p.series[i % p.series.length] + '44',
+          fill: true,
+          stack: 'dic',
+          tension: 0.3,
+          borderWidth: 1.5,
+          pointRadius: pr,
+          pointHoverRadius: 4,
+        })),
+      },
+      options: opts,
+    };
+  });
+
   // ---- chart option builders ----
+  private wrapLabel(text: string, maxLen = 22): string | string[] {
+    if (text.length <= maxLen) return text;
+    const parts: string[] = [];
+    let rem = text;
+    while (rem.length > maxLen) {
+      let cut = -1;
+      for (const d of [' ', '_', '/', '-', '.']) {
+        const idx = rem.lastIndexOf(d, maxLen);
+        if (idx > 0 && idx > cut) cut = idx;
+      }
+      if (cut < 1) cut = maxLen;
+      parts.push(rem.slice(0, cut + (rem[cut] === ' ' ? 0 : 1)).trim());
+      rem = rem.slice(cut + 1).trim();
+    }
+    if (rem) parts.push(rem);
+    return parts.length > 1 ? parts : text;
+  }
+
   private hbarConfig(
     items: { key: string; count: number }[],
     label: string,
@@ -949,7 +1115,7 @@ export class App implements OnInit {
     return {
       type: 'bar',
       data: {
-        labels: items.map((i) => i.key),
+        labels: items.map((i) => this.wrapLabel(i.key)),
         datasets: [
           {
             label,
@@ -985,7 +1151,7 @@ export class App implements OnInit {
     return {
       type: 'doughnut',
       data: {
-        labels: slices.map((s) => s.key),
+        labels: slices.map((s) => this.wrapLabel(s.key, 26)),
         datasets: [
           {
             data: slices.map((s) => s.count),

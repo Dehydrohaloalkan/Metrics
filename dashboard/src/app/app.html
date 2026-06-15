@@ -37,7 +37,7 @@
           }
         </button>
         <button class="btn" [class.btn--primary]="editMode()" (click)="editMode.set(!editMode())"
-                title="Переставить блоки местами">⚙ {{ editMode() ? 'Готово' : 'Настроить' }}</button>
+                title="Переставить и скрывать блоки">⚙ {{ editMode() ? 'Готово' : 'Настроить' }}</button>
       }
       <button class="btn btn--icon" (click)="themeSvc.toggle()" title="Сменить тему">
         {{ themeSvc.theme() === 'dark' ? '☀' : '☾' }}
@@ -94,6 +94,12 @@
           <button class="chip" (click)="quickRange(24 * 7)">7д</button>
           <button class="chip" (click)="quickRange(24 * 30)">30д</button>
         </div>
+        <button class="btn btn--primary btn--sm filters__apply"
+                [class.filters__apply--pending]="hasDraftChanges()"
+                (click)="commitFilters()"
+                title="Применить выбранные фильтры">
+          {{ hasDraftChanges() ? '● ' : '' }}Применить
+        </button>
         <div class="filters__presets">
           @if (data.presets().length) {
             <select class="preset-select" [ngModel]="''" (ngModelChange)="applyPreset($event)" title="Применить сохранённый фильтр">
@@ -138,16 +144,23 @@
 
           <!-- ip search -->
           <div class="field">
-            <label>Источник (IP или имя)</label>
-            <input type="text" placeholder="10.3.… или имя"
+            <label>IP источника</label>
+            <input type="text" placeholder="10.3.…"
                    [ngModel]="ipInput()" (ngModelChange)="onIpSearch($event)" />
+          </div>
+
+          <!-- name search -->
+          <div class="field">
+            <label>Имя источника</label>
+            <input type="text" placeholder="Иванов, Отдел…"
+                   [ngModel]="nameInput()" (ngModelChange)="onNameSearch($event)" />
           </div>
 
           <!-- service -->
           @if (data.allServices().length > 1) {
             <div class="field">
               <label>Сервис</label>
-              <select [ngModel]="data.service()" (ngModelChange)="data.service.set($event); onFilterChange()">
+              <select [ngModel]="draftService()" (ngModelChange)="draftService.set($event)">
                 <option value="">Все</option>
                 @for (s of data.allServices(); track s) {
                   <option [value]="s">{{ s }}</option>
@@ -160,7 +173,7 @@
           @if (data.sourceGroups().length) {
             <div class="field">
               <label>Группа источников</label>
-              <select [ngModel]="data.groupFilter()" (ngModelChange)="data.groupFilter.set($event); onFilterChange()">
+              <select [ngModel]="draftGroupFilter()" (ngModelChange)="draftGroupFilter.set($event)">
                 <option value="">Все</option>
                 @for (g of data.sourceGroups(); track g.id) {
                   <option [value]="g.id">{{ g.name }}</option>
@@ -175,8 +188,8 @@
             <label>Уровень</label>
             <div class="chips">
               @for (lv of data.allLevels(); track lv) {
-                <button class="chip" [class.chip--on]="data.levels().has(lv)"
-                        (click)="data.toggleSet(data.levels, lv); onFilterChange()">{{ lv }}</button>
+                <button class="chip" [class.chip--on]="draftLevels().has(lv)"
+                        (click)="draftToggleSet(draftLevels, lv)">{{ lv }}</button>
               }
             </div>
           </div>
@@ -186,8 +199,8 @@
             <label>HTTP-статус</label>
             <div class="chips">
               @for (sc of data.allStatusClasses(); track sc) {
-                <button class="chip" [class.chip--on]="data.statusClasses().has(sc)"
-                        (click)="data.toggleSet(data.statusClasses, sc); onFilterChange()">{{ sc }}</button>
+                <button class="chip" [class.chip--on]="draftStatusClasses().has(sc)"
+                        (click)="draftToggleSet(draftStatusClasses, sc)">{{ sc }}</button>
               }
             </div>
           </div>
@@ -198,8 +211,8 @@
               <label>Бизнес-статус (cd_dic_status)</label>
               <div class="chips chips--scroll">
                 @for (ds of data.allDicStatuses(); track ds) {
-                  <button class="chip" [class.chip--on]="data.dicStatuses().has(ds)"
-                          (click)="data.toggleSet(data.dicStatuses, ds); onFilterChange()">{{ ds }}</button>
+                  <button class="chip" [class.chip--on]="draftDicStatuses().has(ds)"
+                          (click)="draftToggleSet(draftDicStatuses, ds)">{{ ds }}</button>
                 }
               </div>
             </div>
@@ -211,8 +224,8 @@
               <label>Эндпоинт (nr_dic)</label>
               <div class="chips chips--scroll">
                 @for (ep of data.allEndpoints(); track ep) {
-                  <button class="chip" [class.chip--on]="data.endpoints().has(ep)"
-                          (click)="data.toggleSet(data.endpoints, ep); onFilterChange()">{{ ep }}</button>
+                  <button class="chip" [class.chip--on]="draftEndpoints().has(ep)"
+                          (click)="draftToggleSet(draftEndpoints, ep)">{{ ep }}</button>
                 }
               </div>
             </div>
@@ -221,8 +234,8 @@
           <!-- only errors -->
           <div class="field field--chips">
             <label>Быстрый</label>
-            <button class="chip chip--toggle" [class.chip--on]="data.onlyErrors()"
-                    (click)="data.onlyErrors.set(!data.onlyErrors()); onFilterChange()">⚠ Только ошибки</button>
+            <button class="chip chip--toggle" [class.chip--on]="draftOnlyErrors()"
+                    (click)="draftOnlyErrors.set(!draftOnlyErrors())">⚠ Только ошибки</button>
           </div>
         </div>
       }
@@ -310,7 +323,7 @@
             </thead>
             <tbody>
               @for (g of data.groupStats(); track g.id) {
-                <tr class="logrow" (click)="data.groupFilter.set(data.groupFilter() === g.id ? '' : g.id); onFilterChange()"
+                <tr class="logrow" (click)="crossFilter('group', g.id)"
                     [class.row--active]="data.groupFilter() === g.id">
                   <td class="nowrap"><span class="gdot" [style.background]="g.color"></span>{{ g.name }}</td>
                   <td>{{ fmtNum(g.sources) }}</td>
@@ -329,7 +342,7 @@
 
     @if (editMode()) {
       <div class="edit-hint">
-        <span>🧩 Режим настройки: перетащите блоки, чтобы поменять местами.</span>
+        <span>🧩 Режим настройки: перетащите блоки для переупорядочивания. Нажмите 👁/🙈 чтобы скрыть или показать блок.</span>
         <div>
           <button class="btn btn--ghost btn--sm" (click)="resetOrder()">Сбросить порядок</button>
           <button class="btn btn--primary btn--sm" (click)="editMode.set(false)">Готово</button>
@@ -337,25 +350,40 @@
       </div>
     }
 
-    <!-- ===== Charts (reorderable) ===== -->
+    <!-- ===== Charts (reorderable + hideable) ===== -->
     <section class="grid" [class.grid--edit]="editMode()">
       @for (key of widgets(); track key) {
-        @if (widgetAvailable(key)) {
+        @if (widgetAvailable(key) && (!hiddenWidgets().has(key) || editMode())) {
           <div
             class="widget {{ widgetSpan(key) }}"
             [class.widget--edit]="editMode()"
+            [class.widget--hidden]="hiddenWidgets().has(key)"
             [class.widget--drag]="dragKey() === key"
             [class.widget--over]="overKey() === key && dragKey() !== key"
-            [draggable]="editMode()"
+            [draggable]="editMode() && !hiddenWidgets().has(key)"
             (dragstart)="onDragStart($event, key)"
             (dragover)="onDragOver($event, key)"
             (drop)="onDrop(key)"
             (dragend)="onDragEnd()"
           >
             @if (editMode()) {
-              <div class="widget__handle">⠿ перетащите</div>
+              <div class="widget__handle">
+                <span>⠿ перетащите</span>
+                <button class="widget__hide-btn"
+                        (click)="$event.stopPropagation(); toggleWidgetHidden(key)"
+                        [title]="hiddenWidgets().has(key) ? 'Показать блок' : 'Скрыть блок'">
+                  {{ hiddenWidgets().has(key) ? '👁' : '🙈' }}
+                </button>
+              </div>
             }
-            <ng-container [ngTemplateOutlet]="widgetTpl" [ngTemplateOutletContext]="{ $implicit: key, fs: false }" />
+            @if (!hiddenWidgets().has(key)) {
+              <ng-container [ngTemplateOutlet]="widgetTpl" [ngTemplateOutletContext]="{ $implicit: key, fs: false }" />
+            } @else {
+              <div class="widget__hidden-ph">
+                <span class="widget__hidden-title">{{ widgetTitle(key) }}</span>
+                <span class="muted">скрыт</span>
+              </div>
+            }
           </div>
         }
       }
@@ -511,6 +539,20 @@
               </select>
             </div>
           </app-chart-panel>
+        }
+        @case ('endpointTrend') {
+          <app-chart-panel title="Динамика по эндпоинтам (топ-6)"
+                           [subtitle]="'Гранулярность: ' + data.effectiveGranularity()"
+                           [config]="endpointTrendConfig()" [height]="fs ? fsHeight() : 300"
+                           [empty]="!data.endpointTimeSeries().series.length"
+                           [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
+        }
+        @case ('dicStatusTrend') {
+          <app-chart-panel title="Динамика бизнес-статусов (топ-6)"
+                           [subtitle]="'cd_dic_status · ' + 'Гранулярность: ' + data.effectiveGranularity()"
+                           [config]="dicStatusTrendConfig()" [height]="fs ? fsHeight() : 300"
+                           [empty]="!data.dicStatusTrendData().series.length"
+                           [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
         }
         @case ('heatmap') {
           @if (activityView() === 'overlay') {
