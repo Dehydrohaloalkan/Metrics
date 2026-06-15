@@ -113,7 +113,8 @@
         <div class="filters__presets">
           @if (data.presets().length) {
             <div class="pdrop" [class.pdrop--open]="presetsMenuOpen()">
-              <button class="btn btn--ghost btn--sm" [class.btn--primary]="activePreset()"
+              <button class="btn btn--sm" [class.btn--ghost]="!activePreset()"
+                      [class.btn--primary]="activePreset()"
                       (click)="presetsMenuOpen.set(!presetsMenuOpen())" title="Сохранённые фильтры">
                 ⭐ {{ activePreset() || 'Пресеты' }}
                 @if (!activePreset()) {
