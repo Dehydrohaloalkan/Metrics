@@ -340,17 +340,21 @@ export class App implements OnInit {
   readonly presetsMenuOpen = signal(false);
   readonly editingPreset = signal<string | null>(null);
   readonly editPresetName = signal('');
+  /** Name of the preset currently applied (shown on the dropdown button). */
+  readonly activePreset = signal<string | null>(null);
 
   saveCurrentPreset(): void {
     const name = this.presetName().trim();
     if (!name) return;
     this.data.savePreset(name);
+    this.activePreset.set(name);
     this.presetName.set('');
   }
   applyPreset(name: string): void {
     if (!name) return;
     this.data.applyPreset(name);
     this.syncDraftFromService();
+    this.activePreset.set(name);
     this.page.set(0);
     this.presetsMenuOpen.set(false);
   }
@@ -362,13 +366,16 @@ export class App implements OnInit {
   removePreset(name: string): void {
     this.data.deletePreset(name);
     if (this.editingPreset() === name) this.editingPreset.set(null);
+    if (this.activePreset() === name) this.activePreset.set(null);
   }
   startRenamePreset(name: string): void {
     this.editingPreset.set(name);
     this.editPresetName.set(name);
   }
   commitRenamePreset(oldName: string): void {
-    this.data.renamePreset(oldName, this.editPresetName());
+    const next = this.editPresetName().trim();
+    this.data.renamePreset(oldName, next);
+    if (next && this.activePreset() === oldName) this.activePreset.set(next);
     this.editingPreset.set(null);
   }
 
@@ -382,15 +389,36 @@ export class App implements OnInit {
     ...this.data.sourceGroups().map((g) => ({ value: g.id, label: g.name, color: g.color })),
     { value: this.data.UNGROUPED, label: 'Без группы' },
   ]);
-  /** Searchable list of every known source (name + IP) for the filter picker. */
-  readonly sourceOptions = computed<SelectOption[]>(() => [
-    { value: '', label: '— любой источник —' },
+  /** Searchable list of every known source IP (label = IP, sub = name + count). */
+  readonly ipFilterOptions = computed<SelectOption[]>(() => [
+    { value: '', label: '— любой IP —' },
     ...this.data.allSources().map((s) => ({
       value: s.key,
-      label: this.displaySource(s.key),
-      sub: `${s.key} · ${this.fmtNum(s.count)}`,
+      label: s.key,
+      sub: `${this.displaySource(s.key)} · ${this.fmtNum(s.count)}`,
     })),
   ]);
+  /** Distinct source *names* (many IPs may share one name). */
+  readonly nameFilterOptions = computed<SelectOption[]>(() => {
+    const byName = new Map<string, { ips: Set<string>; count: number }>();
+    for (const s of this.data.allSources()) {
+      const nm = this.data.resolveName(s.key);
+      if (!nm) continue;
+      let e = byName.get(nm);
+      if (!e) {
+        e = { ips: new Set(), count: 0 };
+        byName.set(nm, e);
+      }
+      e.ips.add(s.key);
+      e.count += s.count;
+    }
+    return [
+      { value: '', label: '— любое имя —' },
+      ...[...byName.entries()]
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([nm, e]) => ({ value: nm, label: nm, sub: `${e.ips.size} IP · ${this.fmtNum(e.count)}` })),
+    ];
+  });
   readonly drilldownOptions = computed<SelectOption[]>(() =>
     this.data.bySource().map((s) => ({
       value: s.key,
@@ -405,14 +433,20 @@ export class App implements OnInit {
     { value: '250', label: '250' },
   ];
 
-  /** Pick an exact source from the dropdown → stage it as the IP filter. */
+  /** Pick an exact IP from the dropdown → stage it as the IP filter. */
   pickSource(ip: string): void {
     this.draftIpQuery.set(ip);
     this.ipInput.set(ip);
     this.showToast(
-      ip
-        ? `Добавлено в фильтр — источник: ${this.displaySource(ip)}. Нажмите «Применить»`
-        : 'Фильтр по источнику снят',
+      ip ? `Добавлено в фильтр — IP: ${ip}. Нажмите «Применить»` : 'Фильтр по IP снят',
+    );
+  }
+  /** Pick a source name from the dropdown → stage it as the name filter. */
+  pickSourceName(name: string): void {
+    this.draftNameQuery.set(name);
+    this.nameInput.set(name);
+    this.showToast(
+      name ? `Добавлено в фильтр — имя: ${name}. Нажмите «Применить»` : 'Фильтр по имени снят',
     );
   }
 
@@ -625,6 +659,8 @@ export class App implements OnInit {
     this.data.nameQuery.set(this.draftNameQuery());
     this.data.textQuery.set(this.draftTextQuery());
     this.data.onlyErrors.set(this.draftOnlyErrors());
+    // A manual apply may diverge from the preset that was loaded.
+    this.activePreset.set(null);
     this.page.set(0);
   }
 
@@ -699,6 +735,7 @@ export class App implements OnInit {
   resetAll(): void {
     this.data.resetFilters();
     this.syncDraftFromService();
+    this.activePreset.set(null);
     this.page.set(0);
   }
 
@@ -1251,11 +1288,13 @@ export class App implements OnInit {
   });
 
   // ---- chart option builders ----
-  private wrapLabel(text: string, maxLen = 22): string | string[] {
+  private wrapLabel(text: string, maxLen = 22, maxLines = 2): string | string[] {
     if (text.length <= maxLen) return text;
     const parts: string[] = [];
     let rem = text;
     while (rem.length > maxLen) {
+      // Leave whatever is left for the final line once we're one line short.
+      if (parts.length === maxLines - 1) break;
       let cut = -1;
       for (const d of [' ', '_', '/', '-', '.']) {
         const idx = rem.lastIndexOf(d, maxLen);
@@ -1266,7 +1305,12 @@ export class App implements OnInit {
       rem = rem.slice(cut + 1).trim();
     }
     if (rem) parts.push(rem);
-    return parts.length > 1 ? parts : text;
+    // Ellipsize the last line if it's still too long (e.g. a 150-char name).
+    const last = parts.length - 1;
+    if (parts[last] && parts[last].length > maxLen) {
+      parts[last] = parts[last].slice(0, maxLen - 1).trimEnd() + '…';
+    }
+    return parts.length > 1 ? parts : parts[0];
   }
 
   private hbarConfig(
@@ -1275,6 +1319,11 @@ export class App implements OnInit {
     danger = false,
   ): ChartConfiguration<'bar'> {
     const p = this.themeSvc.palette();
+    const opts = { ...this.barOptions(p), indexAxis: 'y' as const };
+    // Show the *full* (untruncated) label on hover, since long names are
+    // ellipsized on the axis.
+    const tip = (opts.plugins ??= {}).tooltip as Record<string, unknown>;
+    tip['callbacks'] = { title: (ctx: { dataIndex: number }[]) => items[ctx[0]?.dataIndex]?.key ?? '' };
     return {
       type: 'bar',
       data: {
@@ -1290,10 +1339,7 @@ export class App implements OnInit {
           },
         ],
       },
-      options: {
-        ...this.barOptions(p),
-        indexAxis: 'y',
-      },
+      options: opts,
     };
   }
 

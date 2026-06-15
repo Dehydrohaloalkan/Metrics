@@ -113,9 +113,12 @@
         <div class="filters__presets">
           @if (data.presets().length) {
             <div class="pdrop" [class.pdrop--open]="presetsMenuOpen()">
-              <button class="btn btn--ghost btn--sm" (click)="presetsMenuOpen.set(!presetsMenuOpen())"
-                      title="Сохранённые фильтры">
-                ⭐ Пресеты <span class="cnt">{{ data.presets().length }}</span>
+              <button class="btn btn--ghost btn--sm" [class.btn--primary]="activePreset()"
+                      (click)="presetsMenuOpen.set(!presetsMenuOpen())" title="Сохранённые фильтры">
+                ⭐ {{ activePreset() || 'Пресеты' }}
+                @if (!activePreset()) {
+                  <span class="cnt">{{ data.presets().length }}</span>
+                }
                 <span class="caret">{{ presetsMenuOpen() ? '▲' : '▼' }}</span>
               </button>
               @if (presetsMenuOpen()) {
@@ -173,18 +176,20 @@
                    [ngModel]="textInput()" (ngModelChange)="onTextSearch($event)" />
           </div>
 
-          <!-- ip search -->
+          <!-- source by IP -->
           <div class="field" [class.field--pending]="pendingIp()">
-            <label>IP источника</label>
-            <input type="text" placeholder="10.3.…"
-                   [ngModel]="ipInput()" (ngModelChange)="onIpSearch($event)" />
+            <label>Источник по IP</label>
+            <app-select [options]="ipFilterOptions()" [value]="draftIpQuery()" [searchable]="true"
+                        [pending]="pendingIp()" searchPlaceholder="10.3.…"
+                        placeholder="— любой IP —" (valueChange)="pickSource($event)" />
           </div>
 
-          <!-- name search -->
+          <!-- source by name -->
           <div class="field" [class.field--pending]="pendingName()">
-            <label>Имя источника</label>
-            <input type="text" placeholder="Иванов, Отдел…"
-                   [ngModel]="nameInput()" (ngModelChange)="onNameSearch($event)" />
+            <label>Источник по имени</label>
+            <app-select [options]="nameFilterOptions()" [value]="draftNameQuery()" [searchable]="true"
+                        [pending]="pendingName()" searchPlaceholder="Иванов, Отдел…"
+                        placeholder="— любое имя —" (valueChange)="pickSourceName($event)" />
           </div>
 
           <!-- service -->
@@ -206,14 +211,6 @@
                           (valueChange)="draftGroupFilter.set($event)" placeholder="Все группы" />
             </div>
           }
-
-          <!-- pick a known source -->
-          <div class="field" [class.field--pending]="pendingIp()">
-            <label>Выбрать источник</label>
-            <app-select [options]="sourceOptions()" [value]="draftIpQuery()" [searchable]="true"
-                        [pending]="pendingIp()" searchPlaceholder="IP или имя…"
-                        placeholder="— любой источник —" (valueChange)="pickSource($event)" />
-          </div>
 
           <!-- levels -->
           <div class="field field--chips" [class.field--pending]="pendingLevels()">

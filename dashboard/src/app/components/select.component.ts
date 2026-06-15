@@ -88,6 +88,9 @@ export interface SelectOption {
         position: relative;
         min-width: 0;
       }
+      .sel--open {
+        z-index: 80;
+      }
       .sel__btn {
         display: flex;
         align-items: center;

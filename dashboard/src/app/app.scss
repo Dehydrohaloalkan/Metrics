@@ -202,7 +202,10 @@
   border: 1px solid var(--border);
   border-radius: 16px;
   box-shadow: var(--shadow);
-  overflow: hidden;
+  /* visible so open dropdown menus aren't clipped at the card's bottom edge */
+  overflow: visible;
+  position: relative;
+  z-index: 5;
 }
 .filters__bar {
   display: flex;
