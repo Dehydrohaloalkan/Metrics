@@ -148,8 +148,17 @@ ipcMain.handle('export:pdf', async () => {
 // --- IPC: load members.csv (ip -> name mapping) ---
 ipcMain.handle('members:loadDefault', async () => loadNamedFile('members.csv'));
 
-// --- IPC: persistent settings (settings.json in userData) ---
+// --- IPC: persistent settings (settings.json next to the exe / portable dir) ---
 function settingsPath() {
+  if (!isDev) {
+    if (process.env.PORTABLE_EXECUTABLE_DIR) {
+      return path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'settings.json');
+    }
+    try {
+      return path.join(path.dirname(app.getPath('exe')), 'settings.json');
+    } catch { /* fall through */ }
+  }
+  // Dev and last-resort fallback
   return path.join(app.getPath('userData'), 'settings.json');
 }
 

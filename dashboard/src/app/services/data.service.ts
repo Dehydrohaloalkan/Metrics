@@ -171,11 +171,15 @@ export class DataService {
   });
 
   readonly dataRange = computed<{ min: number; max: number } | null>(() => {
-    const ts = this.rows()
-      .map((r) => r.ts)
-      .filter((t) => !isNaN(t));
-    if (!ts.length) return null;
-    return { min: Math.min(...ts), max: Math.max(...ts) };
+    let min = Infinity, max = -Infinity;
+    for (const r of this.rows()) {
+      if (!isNaN(r.ts)) {
+        if (r.ts < min) min = r.ts;
+        if (r.ts > max) max = r.ts;
+      }
+    }
+    if (min === Infinity) return null;
+    return { min, max };
   });
 
   // --- Filtered rows --------------------------------------------------------
