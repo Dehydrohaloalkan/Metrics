@@ -389,26 +389,6 @@
                            [config]="groupTrendConfig()" [height]="fs ? fsHeight() : 300"
                            [empty]="!data.groupTimeSeries().series.length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
         }
-        @case ('cloud') {
-          <section class="panel">
-            <header class="panel__head">
-              <div>
-                <h3>Граф связей: источники ↔ эндпоинты</h3>
-                <p>размер узла — объём запросов · цвет источника — группа</p>
-              </div>
-              @if (!fs && !editMode()) {
-                <button class="panel__fs" (click)="openFocus(key)" title="На весь экран">⛶</button>
-              }
-            </header>
-            <div class="panel__body">
-              @if (data.graph().nodes.length) {
-                <app-cloud [data]="data.graph()" [palette]="cloudPalette()" [height]="fs ? fsHeight() : 440" />
-              } @else {
-                <div class="panel__empty" [style.height.px]="fs ? fsHeight() : 440">Нет данных для отображения</div>
-              }
-            </div>
-          </section>
-        }
         @case ('statusTrend') {
           <app-chart-panel title="Состав статусов во времени" subtitle="накопление по классам"
                            [config]="statusTrendConfig()" [height]="fs ? fsHeight() : 300"
@@ -478,14 +458,27 @@
                            [empty]="!data.byService().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)" />
         }
         @case ('sourcePie') {
-          <app-chart-panel title="Доли по источникам" subtitle="по запросам"
-                           [config]="sourcePieConfig()"
-                           [height]="fs ? fsHeight() : pieHeight(pieSlices(data.bySource().length, sourcePieLimit()))"
-                           [empty]="!data.bySource().length" [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
+          <app-chart-panel
+            [title]="sourcePieView() === 'groups' && data.sourceGroups().length ? 'Доли по группам' : 'Доли по источникам'"
+            subtitle="по запросам"
+            [config]="activePieConfig()"
+            [height]="fs ? fsHeight() : (sourcePieView() === 'groups' && data.sourceGroups().length
+              ? pieHeight(data.byGroup().length)
+              : pieHeight(pieSlices(data.bySource().length, sourcePieLimit())))"
+            [empty]="!data.filtered().length"
+            [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
             <div panelActions class="seg">
-              @for (n of pieLimitOptions; track n) {
-                <button class="seg__btn" [class.seg__btn--on]="sourcePieLimit() === n"
-                        (click)="sourcePieLimit.set(n)">{{ limitLabel(n) }}</button>
+              @if (data.sourceGroups().length) {
+                <button class="seg__btn" [class.seg__btn--on]="sourcePieView() === 'groups'"
+                        (click)="setSourcePieView('groups')">По группам</button>
+                <button class="seg__btn" [class.seg__btn--on]="sourcePieView() === 'sources'"
+                        (click)="setSourcePieView('sources')">По IP</button>
+              }
+              @if (sourcePieView() === 'sources' || !data.sourceGroups().length) {
+                @for (n of pieLimitOptions; track n) {
+                  <button class="seg__btn" [class.seg__btn--on]="sourcePieLimit() === n"
+                          (click)="sourcePieLimit.set(n)">{{ limitLabel(n) }}</button>
+                }
               }
             </div>
           </app-chart-panel>

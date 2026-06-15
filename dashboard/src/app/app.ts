@@ -17,7 +17,6 @@ import { ChartPanelComponent } from './components/chart-panel.component';
 import { HeatmapComponent } from './components/heatmap.component';
 import { CountComponent } from './components/count.component';
 import { SparklineComponent } from './components/sparkline.component';
-import { CloudComponent } from './components/cloud.component';
 import { LogRow } from './models';
 
 type SortKey = 'date' | 'level' | 'service' | 'nrDic' | 'httpCode' | 'ip';
@@ -34,7 +33,6 @@ type CrossKind = 'level' | 'status' | 'endpoint' | 'service' | 'ip' | 'text' | '
     HeatmapComponent,
     CountComponent,
     SparklineComponent,
-    CloudComponent,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
@@ -47,7 +45,7 @@ export class App implements OnInit {
   // ---- dashboard layout (reorderable widgets) ----
   readonly editMode = signal(false);
   readonly defaultWidgets = [
-    'timeseries', 'groups', 'groupTrend', 'cloud', 'statusTrend', 'pareto',
+    'timeseries', 'groups', 'groupTrend', 'statusTrend', 'pareto',
     'levels', 'status', 'dicStatus', 'endpoints', 'ips', 'urls',
     'httpcodes', 'service', 'sourcePie', 'endpointPie', 'drilldown', 'heatmap',
   ];
@@ -85,7 +83,7 @@ export class App implements OnInit {
   }
 
   widgetSpan(key: string): string {
-    if (key === 'heatmap' || key === 'cloud') return 'span-3';
+    if (key === 'heatmap') return 'span-3';
     if (key === 'timeseries' || key === 'urls' || key === 'drilldown' ||
         key === 'groupTrend' || key === 'statusTrend' || key === 'pareto') return 'span-2';
     // pies widen when showing many slices so legends fit
@@ -112,7 +110,6 @@ export class App implements OnInit {
     timeseries: 'Динамика запросов и ошибок',
     groups: 'Запросы по группам источников',
     groupTrend: 'Динамика по группам',
-    cloud: 'Граф связей: источники ↔ эндпоинты',
     statusTrend: 'Состав статусов во времени',
     pareto: 'Концентрация нагрузки (Парето)',
     dicStatus: 'Бизнес-статусы (cd_dic_status)',
@@ -123,7 +120,7 @@ export class App implements OnInit {
     urls: 'Топ URL',
     httpcodes: 'HTTP-коды',
     service: 'По сервисам',
-    sourcePie: 'Доли по источникам',
+    sourcePie: 'Доли по источникам / группам',
     endpointPie: 'Доли по эндпоинтам',
     drilldown: 'Эндпоинты выбранного источника',
     heatmap: 'Активность по времени',
@@ -779,10 +776,18 @@ export class App implements OnInit {
   });
 
   // ===================== SOURCE GROUPS =====================
-  readonly cloudPalette = computed(() => {
-    const p = this.themeSvc.palette();
-    return { text: p.text, textMuted: p.textMuted, grid: p.grid, surface: p.surface };
-  });
+  readonly sourcePieView = signal<'groups' | 'sources'>(
+    this.settings.get('sourcePieView', 'sources'),
+  );
+  setSourcePieView(v: 'groups' | 'sources'): void {
+    this.sourcePieView.set(v);
+    this.settings.set('sourcePieView', v);
+  }
+  readonly activePieConfig = computed<ChartConfiguration<'doughnut'>>(() =>
+    this.sourcePieView() === 'groups' && this.data.sourceGroups().length > 0
+      ? this.groupPieConfig()
+      : this.sourcePieConfig(),
+  );
 
   readonly groupBarConfig = computed<ChartConfiguration<'bar'>>(() => {
     const p = this.themeSvc.palette();
