@@ -37,8 +37,12 @@
     },
     "files": [
       "electron/**/*",
+      "!electron/engine-test.js",
       "dist/dashboard/browser/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/@duckdb/**"
     ],
     "extraResources": [
       {

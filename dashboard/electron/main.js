@@ -1,11 +1,13 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { DuckEngine } = require('./duckdb-engine');
 
 const isDev = !app.isPackaged || process.env.ELECTRON_DEV === '1';
 
 let mainWindow = null;
 let watchedCsvPath = null;
+const engine = new DuckEngine();
 
 /** Watch the active data.csv and notify the renderer when it changes. */
 function watchCsv(filePath) {
@@ -53,6 +55,18 @@ function fileCandidates(fileName) {
   candidates.push(path.join(__dirname, '..', fileName));
 
   return candidates;
+}
+
+/** First existing candidate path for a named data file, or null. */
+function resolveDataPath(fileName) {
+  for (const candidate of fileCandidates(fileName)) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
 }
 
 function loadNamedFile(fileName) {
@@ -117,6 +131,91 @@ ipcMain.handle('csv:loadDefault', async () => {
   const res = loadNamedFile('data.csv');
   if (res.ok && res.path) watchCsv(res.path);
   return res;
+});
+
+// ===================== DuckDB analytics engine IPC =====================
+// Load CSV (+ members) straight off disk into DuckDB; returns metadata only.
+async function engineLoad(csvPath, tz) {
+  await engine.init();
+  if (tz) await engine.setTimezone(tz);
+  await engine.loadCsv(csvPath);
+  const membersPath = resolveDataPath('members.csv');
+  if (membersPath) await engine.loadMembers(membersPath);
+  watchCsv(csvPath);
+  const meta = await engine.meta();
+  return { ok: true, path: csvPath, hasMembers: !!membersPath, meta };
+}
+
+ipcMain.handle('analytics:loadDefault', async (_e, args) => {
+  const csvPath = resolveDataPath('data.csv');
+  if (!csvPath) return { ok: false, error: 'data.csv не найден рядом с приложением.' };
+  try {
+    return await engineLoad(csvPath, args && args.tz);
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('analytics:pick', async (_e, args) => {
+  const result = await dialog.showOpenDialog({
+    title: 'Выберите CSV с логами',
+    properties: ['openFile'],
+    filters: [
+      { name: 'CSV / логи', extensions: ['csv', 'log', 'txt'] },
+      { name: 'Все файлы', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return { ok: false, canceled: true };
+  try {
+    return await engineLoad(result.filePaths[0], args && args.tz);
+  } catch (err) {
+    return { ok: false, path: result.filePaths[0], error: String(err) };
+  }
+});
+
+ipcMain.handle('analytics:setTimezone', async (_e, tz) => {
+  try {
+    await engine.setTimezone(tz);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('analytics:setGroups', async (_e, groups) => {
+  try {
+    await engine.setGroups(groups || []);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+// Apply the filter (materialises `cur`) and return every chart dataset + page.
+ipcMain.handle('analytics:query', async (_e, payload) => {
+  try {
+    const { filter = {}, opts = {} } = payload || {};
+    const { total } = await engine.applyFilter(filter);
+    const dash = await engine.dashboard(opts);
+    return { ok: true, total, ...dash };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('analytics:export', async () => {
+  if (!mainWindow) return { ok: false };
+  try {
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: 'Экспорт отфильтрованного',
+      defaultPath: 'metrics-filtered.csv',
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    });
+    if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+    return await engine.exportCsv(res.filePath);
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 });
 
 // --- IPC: export the whole dashboard to PDF ---
