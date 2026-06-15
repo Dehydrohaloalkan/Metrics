@@ -1,8 +1,20 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import Papa from 'papaparse';
 import { LogRow, SourceInfo, ERROR_LEVELS, WARN_LEVELS } from '../models';
 import { parseCsvStream } from '../csv-stream';
 import { SettingsService } from './settings.service';
+
+/** Result of an analytics:* engine load (metadata only — no row payload). */
+export interface EngineMeta {
+  rows: number;
+  range: { min: number; max: number } | null;
+  levels: string[];
+  statusClasses: string[];
+  services: string[];
+  endpoints: string[];
+  dicStatuses: string[];
+  allSources: Counted[];
+}
 
 declare global {
   interface Window {
@@ -11,6 +23,16 @@ declare global {
       loadDefault: () => Promise<{ ok: boolean; path?: string; content?: string; error?: string; canceled?: boolean }>;
       loadMembers: () => Promise<{ ok: boolean; path?: string; content?: string; error?: string; canceled?: boolean }>;
       pickFile: () => Promise<{ ok: boolean; path?: string; content?: string; error?: string; canceled?: boolean }>;
+      // DuckDB analytics engine — out-of-core, used for large files.
+      analytics?: {
+        loadDefault: (tz: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean; meta?: EngineMeta }>;
+        pick: (tz: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean; meta?: EngineMeta }>;
+        setTimezone: (tz: string) => Promise<{ ok: boolean }>;
+        setGroups: (groups: { id: string; members: string[] }[]) => Promise<{ ok: boolean }>;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        query: (filter: Record<string, unknown>, opts: Record<string, unknown>) => Promise<any>;
+        exportCsv: () => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+      };
     };
   }
 }
@@ -97,6 +119,69 @@ export class DataService {
   readonly status = signal<string>('');
   readonly isElectron = !!window.metricsAPI?.isElectron;
 
+  // --- DuckDB engine state (active only after a successful engine load) -----
+  /** When true, all aggregates come from the out-of-core engine, not `rows`. */
+  readonly engineActive = signal(false);
+  /** Latest full dashboard payload returned by analytics:query. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly engine = signal<any | null>(null);
+  readonly engineMeta = signal<EngineMeta | null>(null);
+  readonly engineTotal = signal(0);
+  /** Detail-table page state (drives the engine query; mirrors old App state). */
+  readonly tableSort = signal<{ key: string; dir: 'asc' | 'desc' }>({ key: 'date', dir: 'desc' });
+  readonly tablePage = signal(0);
+  readonly tablePageSize = signal(50);
+  private readonly tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  private queryToken = 0;
+  /** Bumped after pushing new source groups to the engine, to force a re-query. */
+  private readonly groupsVersion = signal(0);
+
+  constructor() {
+    // Re-query the engine whenever a filter or view option changes. Cheap on the
+    // renderer side — the heavy work is one IPC round-trip into DuckDB.
+    effect(() => {
+      if (!this.engineActive()) return;
+      this.groupsVersion(); // re-query when source groups change
+      // Track every input the query depends on.
+      const filter = this.captureState();
+      const opts = {
+        granularity: this.granularity(),
+        endpointsLimit: this.endpointsLimit(),
+        urlsLimit: this.urlsLimit(),
+        ipsLimit: this.ipsLimit(),
+        endpointTrendLimit: this.endpointTrendLimit(),
+        heatmapBucketMin: this.heatmapBucketMin(),
+        selectedSource: this.selectedSource(),
+        sort: this.tableSort(),
+        page: this.tablePage(),
+        pageSize: this.tablePageSize(),
+      };
+      untracked(() => this.runEngineQuery(filter, opts));
+    });
+  }
+
+  private async runEngineQuery(filter: Record<string, unknown>, opts: Record<string, unknown>): Promise<void> {
+    const api = window.metricsAPI?.analytics;
+    if (!api) return;
+    const token = ++this.queryToken;
+    this.loading.set(true);
+    try {
+      const res = await api.query(filter, opts);
+      if (token !== this.queryToken) return; // a newer query superseded this one
+      if (res && res.ok) {
+        this.engine.set(res);
+        this.engineTotal.set(res.total ?? 0);
+      }
+    } catch {
+      /* keep the previous frame on transient errors */
+    } finally {
+      if (token === this.queryToken) {
+        this.loading.set(false);
+        this.progress.set(null);
+      }
+    }
+  }
+
   // how many bars to show in the "top N" charts (0 = all)
   readonly endpointsLimit = signal(15);
   readonly ipsLimit = signal(15);
@@ -152,19 +237,38 @@ export class DataService {
         !groups.some((g) => g.id === this.groupFilter())) {
       this.groupFilter.set('');
     }
+    // Push the new mapping to the engine, then force a re-query.
+    const api = window.metricsAPI?.analytics;
+    if (this.engineActive() && api) {
+      api
+        .setGroups(groups.map((g) => ({ id: g.id, members: g.members })))
+        .then(() => this.groupsVersion.update((v) => v + 1))
+        .catch(() => undefined);
+    }
   }
 
   // --- Distinct option lists (from full dataset) ----------------------------
-  readonly allLevels = computed(() => this.distinct((r) => r.level));
-  readonly allStatusClasses = computed(() => this.distinct((r) => r.statusClass).sort());
-  readonly allServices = computed(() => this.distinct((r) => r.service).sort());
-  readonly allEndpoints = computed(() => this.distinct((r) => r.nrDic).sort());
+  readonly allLevels = computed(() =>
+    this.engineActive() ? this.engineMeta()?.levels ?? [] : this.distinct((r) => r.level),
+  );
+  readonly allStatusClasses = computed(() =>
+    this.engineActive() ? this.engineMeta()?.statusClasses ?? [] : this.distinct((r) => r.statusClass).sort(),
+  );
+  readonly allServices = computed(() =>
+    this.engineActive() ? this.engineMeta()?.services ?? [] : this.distinct((r) => r.service).sort(),
+  );
+  readonly allEndpoints = computed(() =>
+    this.engineActive() ? this.engineMeta()?.endpoints ?? [] : this.distinct((r) => r.nrDic).sort(),
+  );
   readonly allDicStatuses = computed(() =>
-    this.distinct((r) => r.dicStatus).filter((v) => v && v !== '—').sort(),
+    this.engineActive()
+      ? this.engineMeta()?.dicStatuses ?? []
+      : this.distinct((r) => r.dicStatus).filter((v) => v && v !== '—').sort(),
   );
 
   /** Every source IP seen in the dataset, with its all-time request count. */
   readonly allSources = computed<Counted[]>(() => {
+    if (this.engineActive()) return this.engineMeta()?.allSources ?? [];
     const map = new Map<string, number>();
     for (const r of this.rows()) {
       if (!r.ip || r.ip === '—') continue;
@@ -176,6 +280,7 @@ export class DataService {
   });
 
   readonly dataRange = computed<{ min: number; max: number } | null>(() => {
+    if (this.engineActive()) return this.engineMeta()?.range ?? null;
     let min = Infinity, max = -Infinity;
     for (const r of this.rows()) {
       if (!isNaN(r.ts)) {
@@ -254,8 +359,21 @@ export class DataService {
       this.onlyErrors(),
   );
 
+  /** Row count of the active (filtered) set — engine total or in-memory length. */
+  readonly filteredCount = computed(() => (this.engineActive() ? this.engineTotal() : this.filtered().length));
+  /** Total rows in the loaded dataset. */
+  readonly rowCount = computed(() => (this.engineActive() ? this.engineMeta()?.rows ?? 0 : this.rows().length));
+
   // --- KPIs -----------------------------------------------------------------
   readonly kpis = computed(() => {
+    if (this.engineActive()) {
+      return (
+        this.engine()?.kpis ?? {
+          total: 0, errors: 0, warnings: 0, errorRate: 0, successRate: 0,
+          uniqueIps: 0, uniqueEndpoints: 0, perHour: 0, from: null, to: null,
+        }
+      );
+    }
     const rows = this.filtered();
     const total = rows.length;
     let errors = 0;
@@ -310,6 +428,7 @@ export class DataService {
     errRatePts: number;
     hasPrev: boolean;
   } | null>(() => {
+    if (this.engineActive()) return null; // period-over-period not computed by the engine yet
     const from = this.dateFrom();
     const to = this.dateTo();
     let a: number, b: number;
@@ -352,6 +471,7 @@ export class DataService {
   readonly effectiveGranularity = computed<EffectiveGranularity>(() => {
     const g = this.granularity();
     if (g !== 'auto') return g;
+    if (this.engineActive()) return (this.engine()?.effectiveGranularity as EffectiveGranularity) ?? 'day';
     const k = this.kpis();
     if (k.from == null || k.to == null) return 'day';
     const ms = k.to - k.from;
@@ -365,6 +485,7 @@ export class DataService {
   });
 
   readonly timeSeries = computed<Bucket[]>(() => {
+    if (this.engineActive()) return this.engine()?.timeSeries ?? [];
     const g = this.effectiveGranularity();
     const map = new Map<number, Bucket>();
     for (const r of this.filtered()) {
@@ -381,30 +502,41 @@ export class DataService {
     return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
   });
 
-  readonly byLevel = computed<Counted[]>(() => this.countBy((r) => r.level));
-  readonly byStatusClass = computed<Counted[]>(() =>
-    this.countBy((r) => r.statusClass).sort((a, b) => a.key.localeCompare(b.key)),
+  private eng() {
+    return this.engineActive() ? this.engine() : null;
+  }
+
+  readonly byLevel = computed<Counted[]>(() => this.eng()?.byLevel ?? this.countBy((r) => r.level));
+  readonly byStatusClass = computed<Counted[]>(() => {
+    const e = this.eng();
+    const arr = e ? (e.byStatusClass as Counted[]) : this.countBy((r) => r.statusClass);
+    return [...arr].sort((a, b) => a.key.localeCompare(b.key));
+  });
+  readonly byService = computed<Counted[]>(() => this.eng()?.byService ?? this.countBy((r) => r.service));
+  readonly byEndpoint = computed<Counted[]>(() => this.eng()?.byEndpoint ?? this.countBy((r) => r.nrDic));
+  readonly topEndpoints = computed<Counted[]>(() =>
+    this.eng()?.topEndpoints ?? this.limited(this.countBy((r) => r.nrDic), this.endpointsLimit()),
   );
-  readonly byService = computed<Counted[]>(() => this.countBy((r) => r.service));
-  readonly byEndpoint = computed<Counted[]>(() => this.countBy((r) => r.nrDic));
-  readonly topEndpoints = computed<Counted[]>(() => this.limited(this.countBy((r) => r.nrDic), this.endpointsLimit()));
-  readonly topUrls = computed<Counted[]>(() => this.limited(this.countBy((r) => r.urlPath || r.url), this.urlsLimit()));
-  readonly topIps = computed<Counted[]>(() => this.limited(this.countBy((r) => r.ip), this.ipsLimit()));
+  readonly topUrls = computed<Counted[]>(() =>
+    this.eng()?.topUrls ?? this.limited(this.countBy((r) => r.urlPath || r.url), this.urlsLimit()),
+  );
+  readonly topIps = computed<Counted[]>(() => this.eng()?.topIps ?? this.limited(this.countBy((r) => r.ip), this.ipsLimit()));
   readonly topExceptions = computed<Counted[]>(() =>
-    this.countBy((r) => this.shortException(r.exception), (r) => !!r.exception).slice(0, 10),
+    this.eng()?.topExceptions ?? this.countBy((r) => this.shortException(r.exception), (r) => !!r.exception).slice(0, 10),
   );
   readonly topHttpCodes = computed<Counted[]>(() =>
-    this.countBy((r) => r.httpStatus, (r) => r.httpStatus !== '—'),
+    this.eng()?.topHttpCodes ?? this.countBy((r) => r.httpStatus, (r) => r.httpStatus !== '—'),
   );
 
   // --- Business status (cd_dic_status) -------------------------------------
   readonly byDicStatus = computed<Counted[]>(() =>
-    this.countBy((r) => r.dicStatus, (r) => !!r.dicStatus && r.dicStatus !== '—'),
+    this.eng()?.byDicStatus ?? this.countBy((r) => r.dicStatus, (r) => !!r.dicStatus && r.dicStatus !== '—'),
   );
-  readonly topDicStatus = computed<Counted[]>(() => this.limited(this.byDicStatus(), 14));
+  readonly topDicStatus = computed<Counted[]>(() => this.eng()?.topDicStatus ?? this.limited(this.byDicStatus(), 14));
 
   // --- Source groups: counts, comparison, per-group time series ------------
   readonly byGroup = computed<Counted[]>(() => {
+    if (this.engineActive()) return this.engine()?.byGroup ?? [];
     const gi = this.groupIndex();
     const map = new Map<string, Counted>();
     for (const r of this.filtered()) {
@@ -421,6 +553,24 @@ export class DataService {
   });
 
   readonly groupStats = computed<GroupStat[]>(() => {
+    if (this.engineActive()) {
+      const e = this.engine();
+      if (!e) return [];
+      const total = e.kpis?.total || 0;
+      return (e.groupStats as { id: string; count: number; errors: number; sources: number; topEndpoint: string }[]).map(
+        (a) => ({
+          id: a.id,
+          name: this.groupName(a.id),
+          color: this.groupColor(a.id),
+          count: a.count,
+          errors: a.errors,
+          errorRate: a.count ? (a.errors / a.count) * 100 : 0,
+          share: total ? (a.count / total) * 100 : 0,
+          sources: a.sources,
+          topEndpoint: a.topEndpoint,
+        }),
+      );
+    }
     const gi = this.groupIndex();
     const total = this.filtered().length;
     const agg = new Map<string, { count: number; errors: number; ips: Set<string>; ep: Map<string, number> }>();
@@ -460,6 +610,18 @@ export class DataService {
     starts: number[];
     series: { id: string; name: string; color: string; data: number[]; total: number }[];
   }>(() => {
+    if (this.engineActive()) {
+      const e = this.engine();
+      if (!e) return { labels: [], starts: [], series: [] };
+      const series = (e.groupTimeSeries.series as { id: string; data: number[]; total: number }[]).map((s) => ({
+        id: s.id,
+        name: this.groupName(s.id),
+        color: this.groupColor(s.id),
+        data: s.data,
+        total: s.total,
+      }));
+      return { labels: e.groupTimeSeries.labels, starts: e.groupTimeSeries.starts, series };
+    }
     const g = this.effectiveGranularity();
     const gi = this.groupIndex();
     const keys = new Set<number>();
@@ -492,6 +654,17 @@ export class DataService {
 
   // --- Pareto (source concentration) ---------------------------------------
   readonly sourcePareto = computed<{ points: { key: string; raw: string; count: number; cumPct: number }[]; total: number }>(() => {
+    if (this.engineActive()) {
+      const e = this.engine();
+      if (!e) return { points: [], total: 0 };
+      const points = (e.sourcePareto.points as { raw: string; count: number; cumPct: number }[]).map((p) => ({
+        key: this.sourceLabel(p.raw),
+        raw: p.raw,
+        count: p.count,
+        cumPct: p.cumPct,
+      }));
+      return { points, total: e.sourcePareto.total };
+    }
     const src = this.bySource().filter((s) => s.key !== '—');
     const total = src.reduce((s, i) => s + i.count, 0);
     let cum = 0;
@@ -504,6 +677,7 @@ export class DataService {
 
   // --- Status-class composition over time (stacked area) -------------------
   readonly statusTrend = computed<{ labels: string[]; starts: number[]; series: { key: string; data: number[] }[] }>(() => {
+    if (this.engineActive()) return this.engine()?.statusTrend ?? { labels: [], starts: [], series: [] };
     const g = this.effectiveGranularity();
     const classes = ['2xx', '3xx', '4xx', '5xx', '1xx', '—'];
     const keys = new Set<number>();
@@ -530,6 +704,7 @@ export class DataService {
     starts: number[];
     series: { id: string; data: number[]; total: number }[];
   }>(() => {
+    if (this.engineActive()) return this.engine()?.endpointTimeSeries ?? { labels: [], starts: [], series: [] };
     const g = this.effectiveGranularity();
     const lim = this.endpointTrendLimit();
     const topN = lim > 0 ? lim : Infinity;
@@ -561,6 +736,7 @@ export class DataService {
 
   // --- Top-N dic_status time series (for business-status trend chart) -------
   readonly dicStatusTrendData = computed<{ labels: string[]; starts: number[]; series: { key: string; data: number[] }[] }>(() => {
+    if (this.engineActive()) return this.engine()?.dicStatusTrend ?? { labels: [], starts: [], series: [] };
     const g = this.effectiveGranularity();
     const topN = 6;
     const dsCounts = new Map<string, number>();
@@ -593,6 +769,33 @@ export class DataService {
     nodes: { id: string; label: string; kind: 'source' | 'endpoint'; count: number; color: string }[];
     links: { source: string; target: string; value: number }[];
   }>(() => {
+    if (this.engineActive()) {
+      const e = this.engine();
+      if (!e) return { nodes: [], links: [] };
+      const gi = this.groupIndex();
+      const nodes = [
+        ...(e.graph.sources as { id: string; count: number }[]).map((s) => ({
+          id: 's' + s.id,
+          label: this.sourceLabel(s.id),
+          kind: 'source' as const,
+          count: s.count,
+          color: this.groupColor(gi.get(s.id) || this.UNGROUPED),
+        })),
+        ...(e.graph.endpoints as { id: string; count: number }[]).map((p) => ({
+          id: 'e' + p.id,
+          label: p.id,
+          kind: 'endpoint' as const,
+          count: p.count,
+          color: '#22d3ee',
+        })),
+      ];
+      const links = (e.graph.links as { ip: string; ep: string; value: number }[]).map((l) => ({
+        source: 's' + l.ip,
+        target: 'e' + l.ep,
+        value: l.value,
+      }));
+      return { nodes, links };
+    }
     const gi = this.groupIndex();
     const SEP = String.fromCharCode(1);
     const srcCount = new Map<string, number>();
@@ -643,7 +846,7 @@ export class DataService {
   readonly selectedSource = signal<string>(''); // '' = auto (top source)
 
   /** All sources sorted by request count (key = ip). */
-  readonly bySource = computed<Counted[]>(() => this.countBy((r) => r.ip));
+  readonly bySource = computed<Counted[]>(() => this.eng()?.bySource ?? this.countBy((r) => r.ip));
 
   /** The ip currently drilled into (selected or the busiest one). */
   readonly activeSource = computed<string>(() => {
@@ -654,6 +857,7 @@ export class DataService {
 
   /** Endpoint breakdown for the active source. */
   readonly sourceEndpoints = computed<Counted[]>(() => {
+    if (this.engineActive()) return this.engine()?.sourceEndpoints ?? [];
     const ip = this.activeSource();
     if (!ip) return [];
     return this.countBy((r) => r.nrDic, (r) => r.ip === ip);
@@ -663,20 +867,30 @@ export class DataService {
   readonly heatmapBucketMin = signal(60); // minutes per column
 
   readonly heatmap = computed<Heatmap>(() => {
-    const bm = this.heatmapBucketMin();
+    const engPayload = this.eng();
+    const bm = engPayload ? engPayload.heatmap.bucketMin : this.heatmapBucketMin();
     const cols = Math.ceil(1440 / bm);
     const grid: number[][] = Array.from({ length: 7 }, () => new Array(cols).fill(0));
     let max = 0;
     let grandTotal = 0;
 
-    for (const r of this.filtered()) {
-      if (isNaN(r.ts)) continue;
-      const d = r.date!;
-      const day = (d.getDay() + 6) % 7; // Monday = 0
-      const idx = Math.floor((d.getHours() * 60 + d.getMinutes()) / bm);
-      const v = ++grid[day][idx];
-      if (v > max) max = v;
-      grandTotal++;
+    if (engPayload) {
+      for (const cell of engPayload.heatmap.cells as { day: number; col: number; c: number }[]) {
+        if (cell.day < 0 || cell.day > 6 || cell.col < 0 || cell.col >= cols) continue;
+        grid[cell.day][cell.col] = cell.c;
+        if (cell.c > max) max = cell.c;
+      }
+      grandTotal = engPayload.heatmap.grandTotal;
+    } else {
+      for (const r of this.filtered()) {
+        if (isNaN(r.ts)) continue;
+        const d = r.date!;
+        const day = (d.getDay() + 6) % 7; // Monday = 0
+        const idx = Math.floor((d.getHours() * 60 + d.getMinutes()) / bm);
+        const v = ++grid[day][idx];
+        if (v > max) max = v;
+        grandTotal++;
+      }
     }
 
     const colLabels: string[] = [];
@@ -706,8 +920,8 @@ export class DataService {
   readonly insights = computed<{ icon: string; tone: 'good' | 'warn' | 'bad' | 'info'; text: string }[]>(() => {
     const rows = this.filtered();
     const out: { icon: string; tone: 'good' | 'warn' | 'bad' | 'info'; text: string }[] = [];
-    if (!rows.length) return out;
     const k = this.kpis();
+    if (!rows.length && !(this.engineActive() && k.total)) return out;
     const f = (n: number) => Math.round(n).toLocaleString('ru-RU');
 
     if (k.total) {
@@ -732,20 +946,27 @@ export class DataService {
       out.push({ icon: '👤', tone: 'info', text: `Активнее всех: ${this.sourceLabel(top.key)} — ${share.toFixed(0)}% (${f(top.count)})` });
     }
 
-    const errIp = new Map<string, number>();
-    const errEp = new Map<string, number>();
-    for (const r of rows) {
-      if (!r.isError) continue;
-      errIp.set(r.ip, (errIp.get(r.ip) || 0) + 1);
-      errEp.set(r.nrDic, (errEp.get(r.nrDic) || 0) + 1);
-    }
-    if (errIp.size) {
-      const [ip, cnt] = [...errIp.entries()].sort((a, b) => b[1] - a[1])[0];
-      out.push({ icon: '🐞', tone: 'warn', text: `Больше всего ошибок от ${this.sourceLabel(ip)} — ${f(cnt)}` });
-    }
-    if (errEp.size) {
-      const [ep, cnt] = [...errEp.entries()].sort((a, b) => b[1] - a[1])[0];
-      if (ep !== '—') out.push({ icon: '🎯', tone: 'warn', text: `Чаще всего ошибается эндпоинт ${ep} — ${f(cnt)}` });
+    const engPayload = this.eng();
+    if (engPayload) {
+      const et = engPayload.errorTops as { ip: { key: string; count: number } | null; ep: { key: string; count: number } | null };
+      if (et.ip) out.push({ icon: '🐞', tone: 'warn', text: `Больше всего ошибок от ${this.sourceLabel(et.ip.key)} — ${f(et.ip.count)}` });
+      if (et.ep && et.ep.key !== '—') out.push({ icon: '🎯', tone: 'warn', text: `Чаще всего ошибается эндпоинт ${et.ep.key} — ${f(et.ep.count)}` });
+    } else {
+      const errIp = new Map<string, number>();
+      const errEp = new Map<string, number>();
+      for (const r of rows) {
+        if (!r.isError) continue;
+        errIp.set(r.ip, (errIp.get(r.ip) || 0) + 1);
+        errEp.set(r.nrDic, (errEp.get(r.nrDic) || 0) + 1);
+      }
+      if (errIp.size) {
+        const [ip, cnt] = [...errIp.entries()].sort((a, b) => b[1] - a[1])[0];
+        out.push({ icon: '🐞', tone: 'warn', text: `Больше всего ошибок от ${this.sourceLabel(ip)} — ${f(cnt)}` });
+      }
+      if (errEp.size) {
+        const [ep, cnt] = [...errEp.entries()].sort((a, b) => b[1] - a[1])[0];
+        if (ep !== '—') out.push({ icon: '🎯', tone: 'warn', text: `Чаще всего ошибается эндпоинт ${ep} — ${f(cnt)}` });
+      }
     }
 
     const ts = this.timeSeries();
@@ -773,7 +994,47 @@ export class DataService {
   }
 
   // --- Loading --------------------------------------------------------------
+  /**
+   * Load through the DuckDB engine (out-of-core). Returns true when the load
+   * was handled (success or user-cancel); false means the caller should fall
+   * back to the legacy in-memory parser.
+   */
+  private async loadViaEngine(pick: boolean): Promise<boolean> {
+    const api = window.metricsAPI?.analytics;
+    if (!api) return false;
+    this.loading.set(true);
+    this.progress.set({ phase: 'Загрузка данных…', pct: 0 });
+    try {
+      const res = pick ? await api.pick(this.tz) : await api.loadDefault(this.tz);
+      if (res.canceled) return true;
+      if (res.ok && res.meta) {
+        await api.setGroups(this.sourceGroups().map((g) => ({ id: g.id, members: g.members })));
+        this.rows.set([]); // engine mode never holds rows in the renderer
+        this.engineMeta.set(res.meta);
+        this.source.set({
+          name: this.baseName(res.path) || 'data.csv',
+          path: res.path || '',
+          rows: res.meta.rows,
+        });
+        this.resetFilters();
+        this.tablePage.set(0);
+        this.engineActive.set(true); // flips the dashboard onto engine results
+        this.status.set(res.meta.rows ? '' : 'Файл загружен, но строк не найдено.');
+        return true;
+      }
+      this.status.set(res.error || 'Движок не смог загрузить файл.');
+      return false;
+    } catch (e) {
+      this.status.set('Ошибка движка: ' + String(e));
+      return false;
+    } finally {
+      this.loading.set(false);
+      this.progress.set(null);
+    }
+  }
+
   async loadDefault(): Promise<void> {
+    if (window.metricsAPI?.analytics && (await this.loadViaEngine(false))) return;
     if (window.metricsAPI?.isElectron) {
       this.loading.set(true);
       try {
@@ -835,6 +1096,7 @@ export class DataService {
   }
 
   async pickFile(): Promise<void> {
+    if (window.metricsAPI?.analytics && (await this.loadViaEngine(true))) return;
     if (!window.metricsAPI?.isElectron) {
       this.status.set('Выбор файла доступен только в собранном приложении.');
       return;

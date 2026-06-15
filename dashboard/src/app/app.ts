@@ -1,6 +1,7 @@
 import {
   Component,
   computed,
+  effect,
   signal,
   inject,
   OnInit,
@@ -43,6 +44,45 @@ export class App implements OnInit {
   readonly data = inject(DataService);
   readonly themeSvc = inject(ThemeService);
   private readonly settings = inject(SettingsService);
+
+  constructor() {
+    // Mirror the table's sort/page into the data service so the engine query
+    // (when active) returns the right page. Harmless in in-memory mode.
+    effect(() => {
+      this.data.tableSort.set({ key: this.sortKey(), dir: this.sortDir() });
+      this.data.tablePage.set(this.page());
+      this.data.tablePageSize.set(this.pageSize());
+    });
+  }
+
+  /** Engine page rows (snake_case from SQL) mapped onto the LogRow shape. */
+  readonly enginePageRows = computed<LogRow[]>(() => {
+    const e = this.data.engine();
+    if (!e || !e.page) return [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (e.page as any[]).map((r) => ({
+      id: r.id ?? '',
+      service: r.service ?? '—',
+      dateRaw: r.date_raw ?? '',
+      date: r.ts != null ? new Date(r.ts) : null,
+      ts: r.ts ?? NaN,
+      level: r.level ?? '—',
+      levelNorm: r.level_norm ?? '',
+      logger: r.logger ?? '',
+      message: r.message ?? '',
+      ip: r.ip ?? '—',
+      stackTrace: r.stack_trace ?? '',
+      exception: r.exception ?? '',
+      url: r.url ?? '',
+      urlPath: r.url_path ?? '',
+      nrDic: r.nr_dic ?? '—',
+      dicStatus: r.dic_status ?? '',
+      httpStatus: r.http_status ?? '—',
+      httpCode: r.http_code ?? NaN,
+      statusClass: r.status_class ?? '—',
+      isError: !!r.is_error,
+    }));
+  });
 
   // ---- dashboard layout (reorderable + hideable widgets) ----
   readonly editMode = signal(false);
@@ -709,7 +749,7 @@ export class App implements OnInit {
 
   // ---- draft filter commit / sync ----
   commitFilters(): void {
-    this.runWithLoading('Применение фильтров…', () => {
+    const apply = () => {
       this.data.dateFrom.set(this.draftFrom());
       this.data.dateTo.set(this.draftTo());
       this.data.levels.set(new Set(this.draftLevels()));
@@ -725,7 +765,10 @@ export class App implements OnInit {
       // A manual apply may diverge from the preset that was loaded.
       this.activePreset.set(null);
       this.page.set(0);
-    });
+    };
+    // Engine mode: the async query owns the loading overlay (real duration).
+    if (this.data.engineActive()) apply();
+    else this.runWithLoading('Применение фильтров…', apply);
   }
 
   syncDraftFromService(): void {
@@ -797,12 +840,14 @@ export class App implements OnInit {
   }
 
   resetAll(): void {
-    this.runWithLoading('Сброс фильтров…', () => {
+    const reset = () => {
       this.data.resetFilters();
       this.syncDraftFromService();
       this.activePreset.set(null);
       this.page.set(0);
-    });
+    };
+    if (this.data.engineActive()) reset();
+    else this.runWithLoading('Сброс фильтров…', reset);
   }
 
   // ---- sorted + paged rows ----
@@ -846,8 +891,12 @@ export class App implements OnInit {
     return rows;
   });
 
-  readonly totalPages = computed(() => Math.max(1, Math.ceil(this.sorted().length / this.pageSize())));
+  readonly totalPages = computed(() => {
+    const n = this.data.engineActive() ? this.data.filteredCount() : this.sorted().length;
+    return Math.max(1, Math.ceil(n / this.pageSize()));
+  });
   readonly pagedRows = computed<LogRow[]>(() => {
+    if (this.data.engineActive()) return this.enginePageRows();
     const start = this.page() * this.pageSize();
     return this.sorted().slice(start, start + this.pageSize());
   });
@@ -1639,7 +1688,15 @@ export class App implements OnInit {
     return 'badge';
   }
 
-  exportCsv(): void {
+  async exportCsv(): Promise<void> {
+    // Engine mode: stream the filtered set straight to disk via DuckDB COPY
+    // (the renderer never holds the rows).
+    if (this.data.engineActive() && window.metricsAPI?.analytics) {
+      const res = await window.metricsAPI.analytics.exportCsv();
+      if (res.ok) this.showToast('Экспортировано: ' + (res.path || ''));
+      else if (!res.canceled) this.showToast('Не удалось экспортировать: ' + (res.error || ''));
+      return;
+    }
     const csv = this.data.exportFilteredCsv();
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');

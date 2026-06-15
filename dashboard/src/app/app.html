@@ -35,11 +35,11 @@
           <input type="file" accept=".csv,.log,.txt" hidden (change)="onFileInput($event)" />
         </label>
       }
-      <button class="btn btn--ghost" (click)="exportCsv()" [disabled]="!data.filtered().length" title="Экспорт отфильтрованного">⤓ CSV</button>
+      <button class="btn btn--ghost" (click)="exportCsv()" [disabled]="!data.filteredCount()" title="Экспорт отфильтрованного">⤓ CSV</button>
       @if (data.isElectron) {
-        <button class="btn btn--ghost" (click)="exportPdf()" [disabled]="!data.rows().length" title="Отчёт в PDF">⤓ PDF</button>
+        <button class="btn btn--ghost" (click)="exportPdf()" [disabled]="!data.rowCount()" title="Отчёт в PDF">⤓ PDF</button>
       }
-      @if (data.rows().length) {
+      @if (data.rowCount()) {
         <button class="btn" (click)="openGroups()" title="Группы источников">
           👥 Группы
           @if (data.sourceGroups().length) {
@@ -65,7 +65,7 @@
     </div>
   }
 
-  @if (!data.rows().length) {
+  @if (!data.rowCount()) {
     <!-- ===== Empty / status state ===== -->
     <div class="empty">
       <div class="empty__icon">📊</div>
@@ -151,7 +151,7 @@
           }
         </div>
         <div class="filters__result">
-          Показано <b>{{ fmtNum(data.filtered().length) }}</b> из {{ fmtNum(data.rows().length) }}
+          Показано <b>{{ fmtNum(data.filteredCount()) }}</b> из {{ fmtNum(data.rowCount()) }}
         </div>
         @if (data.hasActiveFilters()) {
           <button class="btn btn--ghost btn--sm" (click)="resetAll()">Сбросить</button>
@@ -523,7 +523,7 @@
             [height]="fs ? fsHeight() : (sourcePieView() === 'groups' && data.sourceGroups().length
               ? pieHeight(data.byGroup().length)
               : pieHeight(pieSlices(data.bySource().length, sourcePieLimit())))"
-            [empty]="!data.filtered().length"
+            [empty]="!data.filteredCount()"
             [expandable]="!fs && !editMode()" (expand)="openFocus(key)">
             <div panelActions class="seg">
               @if (data.sourceGroups().length) {
@@ -796,7 +796,7 @@
     </div>
   }
 
-  @if (data.rows().length && hasDraftChanges()) {
+  @if (data.rowCount() && hasDraftChanges()) {
     <div class="pending-bar">
       <span class="pending-bar__txt">● Фильтры выбраны, но не применены</span>
       <button class="btn btn--ghost btn--sm" (click)="cancelDraft()">Отмена</button>
