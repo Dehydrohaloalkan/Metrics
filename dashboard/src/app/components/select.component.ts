@@ -40,7 +40,14 @@ export interface SelectOption {
         <span class="sel__caret">▾</span>
       </button>
       @if (open()) {
-        <div class="sel__menu">
+        <div
+          class="sel__menu"
+          [class.sel__menu--fixed]="fixed()"
+          [style.position]="fixed() ? 'fixed' : null"
+          [style.top.px]="fixed() ? menuPos().top : null"
+          [style.left.px]="fixed() ? menuPos().left : null"
+          [style.width.px]="fixed() ? menuPos().width : null"
+        >
           @if (searchable()) {
             <input
               class="sel__search"
@@ -241,11 +248,14 @@ export class SelectComponent {
   readonly searchPlaceholder = input<string>('Поиск…');
   readonly width = input<string>('');
   readonly pending = input<boolean>(false);
+  /** Render the menu with position:fixed so it escapes clipping/scroll ancestors. */
+  readonly fixed = input<boolean>(false);
   readonly valueChange = output<string>();
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly open = signal(false);
   readonly query = signal('');
+  readonly menuPos = signal<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
 
   private readonly current = computed(() => this.options().find((o) => o.value === this.value()));
   readonly hasValue = computed(() => !!this.value() && !!this.current());
@@ -261,17 +271,43 @@ export class SelectComponent {
   });
 
   toggle(): void {
-    this.open.update((o) => !o);
-    if (this.open()) this.query.set('');
+    const willOpen = !this.open();
+    this.open.set(willOpen);
+    if (willOpen) {
+      this.query.set('');
+      if (this.fixed()) this.measure();
+    }
   }
   pick(v: string): void {
     this.valueChange.emit(v);
     this.open.set(false);
   }
 
+  /** Position a fixed menu just below (or above) the trigger button. */
+  private measure(): void {
+    const btn = this.host.nativeElement.querySelector('.sel__btn') as HTMLElement | null;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const estH = Math.min(320, 56 + this.filtered().length * 34);
+    const below = window.innerHeight - r.bottom;
+    const top = below < estH && r.top > below ? Math.max(8, r.top - estH - 6) : r.bottom + 5;
+    this.menuPos.set({ top, left: r.left, width: r.width });
+  }
+
   @HostListener('document:mousedown', ['$event'])
   onDocDown(ev: MouseEvent): void {
     if (this.open() && !this.host.nativeElement.contains(ev.target as Node)) this.open.set(false);
+  }
+  // Scrolling/wheeling outside the menu would leave a fixed menu detached — close it.
+  @HostListener('document:wheel', ['$event'])
+  onWheel(ev: WheelEvent): void {
+    if (this.open() && this.fixed() && !this.host.nativeElement.contains(ev.target as Node)) {
+      this.open.set(false);
+    }
+  }
+  @HostListener('window:resize')
+  onWinResize(): void {
+    if (this.open() && this.fixed()) this.open.set(false);
   }
   @HostListener('document:keydown.escape')
   onEsc(): void {

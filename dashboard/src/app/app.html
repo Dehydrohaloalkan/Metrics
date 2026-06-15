@@ -778,12 +778,8 @@
                   <span class="src-name">{{ displaySource(s.key) }}</span>
                   <span class="src-ip">{{ s.key }} · {{ fmtNum(s.count) }}</span>
                 </div>
-                <select [ngModel]="draftGroupOf(s.key)" (ngModelChange)="assignSource(s.key, $event)">
-                  <option value="">— без группы —</option>
-                  @for (g of draftGroups(); track g.id) {
-                    <option [value]="g.id">{{ g.name }}</option>
-                  }
-                </select>
+                <app-select width="190px" [fixed]="true" [options]="assignOptions()"
+                            [value]="draftGroupOf(s.key)" (valueChange)="assignSource(s.key, $event)" />
               </div>
             }
             @if (!filteredGroupSources().length) {

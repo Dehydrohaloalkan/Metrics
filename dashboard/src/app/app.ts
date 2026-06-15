@@ -432,6 +432,11 @@ export class App implements OnInit {
     { value: '100', label: '100' },
     { value: '250', label: '250' },
   ];
+  /** Group-assignment options for the source-group manager modal. */
+  readonly assignOptions = computed<SelectOption[]>(() => [
+    { value: '', label: '— без группы —' },
+    ...this.draftGroups().map((g) => ({ value: g.id, label: g.name, color: g.color })),
+  ]);
 
   /** Pick an exact IP from the dropdown → stage it as the IP filter. */
   pickSource(ip: string): void {
