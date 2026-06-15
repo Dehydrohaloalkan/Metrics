@@ -161,6 +161,13 @@ export interface SelectOption {
         padding: 5px;
         animation: sel-in 0.13s ease;
       }
+      /* Fixed menu's containing block is the viewport, so the base
+         min-width:100% would resolve to the whole screen. Width is set
+         explicitly inline from getBoundingClientRect, so drop the constraints. */
+      .sel__menu--fixed {
+        min-width: 0;
+        max-width: none;
+      }
       @keyframes sel-in {
         from {
           opacity: 0;
