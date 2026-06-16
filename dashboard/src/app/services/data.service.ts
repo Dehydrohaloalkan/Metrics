@@ -23,6 +23,7 @@ declare global {
       loadDefault: () => Promise<{ ok: boolean; path?: string; content?: string; error?: string; canceled?: boolean }>;
       loadMembers: () => Promise<{ ok: boolean; path?: string; content?: string; error?: string; canceled?: boolean }>;
       pickFile: () => Promise<{ ok: boolean; path?: string; content?: string; error?: string; canceled?: boolean }>;
+      readFile: (filePath: string) => Promise<{ ok: boolean; path?: string; content?: string; error?: string }>;
       // DuckDB analytics engine — out-of-core, used for large files.
       analytics?: {
         loadDefault: (tz: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean; meta?: EngineMeta }>;
@@ -994,6 +995,11 @@ export class DataService {
   }
 
   // --- Loading --------------------------------------------------------------
+  // Path of the file the user picked when the engine failed to load it —
+  // lets the legacy fallback re-read it directly instead of showing the
+  // open-file dialog a second time.
+  private lastEnginePath: string | null = null;
+
   /**
    * Load through the DuckDB engine (out-of-core). Returns true when the load
    * was handled (success or user-cancel); false means the caller should fall
@@ -1022,6 +1028,7 @@ export class DataService {
         this.status.set(res.meta.rows ? '' : 'Файл загружен, но строк не найдено.');
         return true;
       }
+      this.lastEnginePath = res.path || null;
       this.status.set(res.error || 'Движок не смог загрузить файл.');
       return false;
     } catch (e) {
@@ -1096,7 +1103,27 @@ export class DataService {
   }
 
   async pickFile(): Promise<void> {
-    if (window.metricsAPI?.analytics && (await this.loadViaEngine(true))) return;
+    if (window.metricsAPI?.analytics) {
+      if (await this.loadViaEngine(true)) return;
+      // Engine failed on a file the user already picked — re-read that same
+      // path through the legacy parser instead of opening the dialog again.
+      if (this.lastEnginePath && window.metricsAPI.isElectron) {
+        const path = this.lastEnginePath;
+        this.lastEnginePath = null;
+        this.loading.set(true);
+        try {
+          const res = await window.metricsAPI.readFile(path);
+          if (res.ok && res.content != null) {
+            await this.ingest(res.content, this.baseName(res.path) || 'csv', res.path || '');
+          } else {
+            this.status.set(res.error || 'Не удалось прочитать файл.');
+          }
+        } finally {
+          this.loading.set(false);
+        }
+        return;
+      }
+    }
     if (!window.metricsAPI?.isElectron) {
       this.status.set('Выбор файла доступен только в собранном приложении.');
       return;

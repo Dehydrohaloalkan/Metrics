@@ -300,6 +300,17 @@ ipcMain.handle('csv:pick', async () => {
   }
 });
 
+// --- IPC: read a CSV at a known path (no dialog) — used as the legacy
+// fallback when the DuckDB engine fails on a file the user already picked,
+// so we don't ask them to pick it again.
+ipcMain.handle('csv:readPath', async (_e, filePath) => {
+  try {
+    return { ok: true, path: filePath, content: readCsvFile(filePath) };
+  } catch (err) {
+    return { ok: false, path: filePath, error: String(err) };
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {
