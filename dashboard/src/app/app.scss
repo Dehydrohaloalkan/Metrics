@@ -499,11 +499,23 @@
 }
 .group-member-row td {
   background: var(--bg-alt, var(--bg));
+  transition: opacity 0.15s;
+}
+.group-member-row--active td {
+  background: var(--accent-soft) !important;
+}
+.group-member-row--dim {
+  opacity: 0.35;
 }
 .group-member-indent {
   padding-left: 32px !important;
+  font-size: 13px;
+}
+.group-member-ip {
   font-family: monospace;
-  font-size: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 6px;
 }
 .group-member-bar {
   display: inline-block;

@@ -372,9 +372,18 @@
                 </tr>
                 @if (expandedGroups().has(g.id)) {
                   @for (ip of groupMembers(g.id); track ip) {
-                    <tr class="logrow group-member-row" (click)="crossFilter('ip', ip)">
+                    <tr class="logrow group-member-row"
+                        [class.group-member-row--active]="draftIpQuery() === ip"
+                        [class.group-member-row--dim]="draftIpQuery() && draftIpQuery() !== ip"
+                        (click)="crossFilter('ip', ip)">
                       <td class="nowrap group-member-indent">
-                        <span class="group-member-bar" [style.background]="g.color"></span>{{ ip }}
+                        <span class="group-member-bar" [style.background]="g.color"></span>
+                        @if (data.resolveName(ip)) {
+                          <span>{{ data.resolveName(ip) }}</span>
+                          <span class="group-member-ip">{{ ip }}</span>
+                        } @else {
+                          {{ ip }}
+                        }
                       </td>
                       <td colspan="6"></td>
                     </tr>
