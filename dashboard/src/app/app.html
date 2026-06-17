@@ -371,17 +371,18 @@
                   <td class="nowrap">{{ g.topEndpoint }}</td>
                 </tr>
                 @if (expandedGroups().has(g.id)) {
-                  <tr class="group-members-row">
-                    <td colspan="7">
-                      <div class="group-members">
-                        @for (ip of groupMembers(g.id); track ip) {
-                          <span class="group-member-chip" (click)="crossFilter('ip', ip)">{{ ip }}</span>
-                        } @empty {
-                          <span class="muted">Нет участников</span>
-                        }
-                      </div>
-                    </td>
-                  </tr>
+                  @for (ip of groupMembers(g.id); track ip) {
+                    <tr class="logrow group-member-row" (click)="crossFilter('ip', ip)">
+                      <td class="nowrap group-member-indent">
+                        <span class="group-member-bar" [style.background]="g.color"></span>{{ ip }}
+                      </td>
+                      <td colspan="6"></td>
+                    </tr>
+                  } @empty {
+                    <tr class="group-member-row">
+                      <td colspan="7" class="muted" style="padding-left:36px">Нет участников</td>
+                    </tr>
+                  }
                 }
               }
             </tbody>
