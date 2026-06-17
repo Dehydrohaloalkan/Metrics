@@ -93,6 +93,15 @@ export interface GroupStat {
   topEndpoint: string;
 }
 
+export interface MemberStat {
+  ip: string;
+  count: number;
+  errors: number;
+  errorRate: number;
+  share: number;
+  topEndpoint: string;
+}
+
 export interface FilterPreset {
   name: string;
   state: Record<string, unknown>;
@@ -604,6 +613,49 @@ export class DataService {
         };
       })
       .sort((x, y) => y.count - x.count);
+  });
+
+  readonly groupMemberStats = computed<Map<string, MemberStat[]>>(() => {
+    const gi = this.groupIndex();
+    const result = new Map<string, MemberStat[]>();
+
+    if (this.engineActive()) {
+      const e = this.engine();
+      if (!e || !e.memberStats) return result;
+      const total = e.kpis?.total || 1;
+      for (const m of e.memberStats as { ip: string; count: number; errors: number; topEndpoint: string }[]) {
+        const gid = gi.get(m.ip) || this.UNGROUPED;
+        const arr = result.get(gid) ?? [];
+        arr.push({ ip: m.ip, count: m.count, errors: m.errors,
+          errorRate: m.count ? (m.errors / m.count) * 100 : 0,
+          share: m.count / total * 100, topEndpoint: m.topEndpoint });
+        result.set(gid, arr);
+      }
+      return result;
+    }
+
+    const total = this.filtered().length || 1;
+    const agg = new Map<string, { count: number; errors: number; ep: Map<string, number> }>();
+    for (const r of this.filtered()) {
+      if (!r.ip || r.ip === '—') continue;
+      let a = agg.get(r.ip);
+      if (!a) { a = { count: 0, errors: 0, ep: new Map() }; agg.set(r.ip, a); }
+      a.count++;
+      if (r.isError) a.errors++;
+      if (r.nrDic && r.nrDic !== '—') a.ep.set(r.nrDic, (a.ep.get(r.nrDic) || 0) + 1);
+    }
+    for (const [ip, a] of agg.entries()) {
+      const gid = gi.get(ip) || this.UNGROUPED;
+      let topEndpoint = '—', mx = -1;
+      for (const [k, v] of a.ep) if (v > mx) { mx = v; topEndpoint = k; }
+      const arr = result.get(gid) ?? [];
+      arr.push({ ip, count: a.count, errors: a.errors,
+        errorRate: a.count ? (a.errors / a.count) * 100 : 0,
+        share: a.count / total * 100, topEndpoint });
+      result.set(gid, arr);
+    }
+    for (const arr of result.values()) arr.sort((a, b) => b.count - a.count);
+    return result;
   });
 
   readonly groupTimeSeries = computed<{

@@ -371,21 +371,26 @@
                   <td class="nowrap">{{ g.topEndpoint }}</td>
                 </tr>
                 @if (expandedGroups().has(g.id)) {
-                  @for (ip of groupMembers(g.id); track ip) {
+                  @for (m of groupMembersWithStats(g.id); track m.ip) {
                     <tr class="logrow group-member-row"
-                        [class.group-member-row--active]="draftIpQuery() === ip"
-                        [class.group-member-row--dim]="draftIpQuery() && draftIpQuery() !== ip"
-                        (click)="crossFilter('ip', ip)">
+                        [class.group-member-row--active]="draftIpQuery() === m.ip"
+                        [class.group-member-row--dim]="draftIpQuery() && draftIpQuery() !== m.ip"
+                        (click)="crossFilter('ip', m.ip)">
                       <td class="nowrap group-member-indent">
                         <span class="group-member-bar" [style.background]="g.color"></span>
-                        @if (data.resolveName(ip)) {
-                          <span>{{ data.resolveName(ip) }}</span>
-                          <span class="group-member-ip">{{ ip }}</span>
+                        @if (m.name) {
+                          <span>{{ m.name }}</span>
+                          <span class="group-member-ip">{{ m.ip }}</span>
                         } @else {
-                          {{ ip }}
+                          {{ m.ip }}
                         }
                       </td>
-                      <td colspan="6"></td>
+                      <td></td>
+                      <td><b>{{ fmtNum(m.count) }}</b></td>
+                      <td>{{ fmtPct(m.share) }}</td>
+                      <td>{{ fmtNum(m.errors) }}</td>
+                      <td><span [class.http--5xx]="m.errorRate > 5" [class.http--2xx]="m.errorRate < 1">{{ fmtPct(m.errorRate) }}</span></td>
+                      <td class="nowrap">{{ m.topEndpoint }}</td>
                     </tr>
                   } @empty {
                     <tr class="group-member-row">

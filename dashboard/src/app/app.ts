@@ -11,7 +11,7 @@ import {
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ChartConfiguration } from 'chart.js';
-import { DataService, Granularity, SourceGroup, GROUP_COLORS } from './services/data.service';
+import { DataService, Granularity, SourceGroup, GROUP_COLORS, MemberStat } from './services/data.service';
 import { ThemeService } from './services/theme.service';
 import { SettingsService } from './services/settings.service';
 import { ChartPanelComponent } from './components/chart-panel.component';
@@ -934,6 +934,20 @@ export class App implements OnInit {
   }
   groupMembers(id: string): string[] {
     return this.data.sourceGroups().find((g) => g.id === id)?.members ?? [];
+  }
+  groupMembersWithStats(id: string): (MemberStat & { name: string })[] {
+    const statsMap = new Map(
+      (this.data.groupMemberStats().get(id) ?? []).map((s) => [s.ip, s]),
+    );
+    const members = this.data.sourceGroups().find((g) => g.id === id)?.members ?? [];
+    return members
+      .map((ip) => {
+        const s = statsMap.get(ip);
+        return s
+          ? { ...s, name: this.data.resolveName(ip) }
+          : { ip, name: this.data.resolveName(ip), count: 0, errors: 0, errorRate: 0, share: 0, topEndpoint: '—' };
+      })
+      .sort((a, b) => b.count - a.count);
   }
 
   // ===================== CHART CONFIGS =====================

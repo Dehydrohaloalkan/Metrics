@@ -321,6 +321,23 @@ class DuckEngine {
       FROM g ORDER BY g.count DESC`);
   }
 
+  async memberStats() {
+    return this.all(`
+      WITH m AS (
+        SELECT ip,
+               count(*) AS count,
+               count(*) FILTER (WHERE is_error) AS errors
+        FROM cur WHERE ip <> '—' GROUP BY ip
+      ), te AS (
+        SELECT ip, nr_dic,
+               row_number() OVER (PARTITION BY ip ORDER BY count(*) DESC) AS rn
+        FROM cur WHERE nr_dic <> '—' AND ip <> '—' GROUP BY ip, nr_dic
+      )
+      SELECT m.ip, m.count, m.errors,
+             coalesce((SELECT nr_dic FROM te WHERE te.ip = m.ip AND rn = 1), '—') AS topEndpoint
+      FROM m ORDER BY m.count DESC`);
+  }
+
   async groupTimeSeries(gran) {
     const rows = await this._bucketRows(gran, 'group_id');
     const { labels, starts, byKey } = this._pivot(rows, 'key');
@@ -474,8 +491,8 @@ class DuckEngine {
     const [
       kpis, timeSeries, byLevel, byStatusClass, byService, byEndpoint, topEndpoints, topUrls,
       topIps, topExceptions, topHttpCodes, byDicStatus, topDicStatus, byGroup, groupStats,
-      groupTimeSeries, statusTrend, endpointTimeSeries, dicStatusTrend, sourcePareto, graph,
-      heatmap, bySource, sourceEndpoints, errorTops, page,
+      memberStats, groupTimeSeries, statusTrend, endpointTimeSeries, dicStatusTrend, sourcePareto,
+      graph, heatmap, bySource, sourceEndpoints, errorTops, page,
     ] = await Promise.all([
       this.kpis(),
       this.timeSeries(gran),
@@ -492,6 +509,7 @@ class DuckEngine {
       this.countBy('dic_status', { limit: 14, where: `WHERE dic_status <> '' AND dic_status <> '—'` }),
       this.byGroup(),
       this.groupStats(),
+      this.memberStats(),
       this.groupTimeSeries(gran),
       this.statusTrend(gran),
       this.endpointTimeSeries(gran, o.endpointTrendLimit ?? 10),
@@ -508,8 +526,8 @@ class DuckEngine {
       effectiveGranularity: gran,
       kpis, timeSeries, byLevel, byStatusClass, byService, byEndpoint, topEndpoints, topUrls,
       topIps, topExceptions, topHttpCodes, byDicStatus, topDicStatus, byGroup, groupStats,
-      groupTimeSeries, statusTrend, endpointTimeSeries, dicStatusTrend, sourcePareto, graph,
-      heatmap, bySource, sourceEndpoints, errorTops, page,
+      memberStats, groupTimeSeries, statusTrend, endpointTimeSeries, dicStatusTrend, sourcePareto,
+      graph, heatmap, bySource, sourceEndpoints, errorTops, page,
     };
   }
 
