@@ -522,6 +522,7 @@ export class App implements OnInit {
   readonly page = signal(0);
   readonly pageSize = signal(50);
   readonly expandedId = signal<string | null>(null);
+  readonly expandedGroups = signal<Set<string>>(new Set());
 
   // ui state
   readonly filtersOpen = signal(true);
@@ -923,6 +924,16 @@ export class App implements OnInit {
   }
   toggleRow(id: string): void {
     this.expandedId.update((cur) => (cur === id ? null : id));
+  }
+  toggleGroup(id: string): void {
+    this.expandedGroups.update((s) => {
+      const next = new Set(s);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+  groupMembers(id: string): string[] {
+    return this.data.sourceGroups().find((g) => g.id === id)?.members ?? [];
   }
 
   // ===================== CHART CONFIGS =====================

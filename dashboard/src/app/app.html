@@ -355,7 +355,14 @@
               @for (g of data.groupStats(); track g.id) {
                 <tr class="logrow" (click)="crossFilter('group', g.id)"
                     [class.row--active]="data.groupFilter() === g.id">
-                  <td class="nowrap"><span class="gdot" [style.background]="g.color"></span>{{ g.name }}</td>
+                  <td class="nowrap">
+                    <button class="group-expand-btn"
+                            (click)="$event.stopPropagation(); toggleGroup(g.id)"
+                            [title]="expandedGroups().has(g.id) ? 'Свернуть' : 'Развернуть'">
+                      <span class="group-chevron" [class.group-chevron--open]="expandedGroups().has(g.id)">›</span>
+                    </button>
+                    <span class="gdot" [style.background]="g.color"></span>{{ g.name }}
+                  </td>
                   <td>{{ fmtNum(g.sources) }}</td>
                   <td><b>{{ fmtNum(g.count) }}</b></td>
                   <td>{{ fmtPct(g.share) }}</td>
@@ -363,6 +370,19 @@
                   <td><span [class.http--5xx]="g.errorRate > 5" [class.http--2xx]="g.errorRate < 1">{{ fmtPct(g.errorRate) }}</span></td>
                   <td class="nowrap">{{ g.topEndpoint }}</td>
                 </tr>
+                @if (expandedGroups().has(g.id)) {
+                  <tr class="group-members-row">
+                    <td colspan="7">
+                      <div class="group-members">
+                        @for (ip of groupMembers(g.id); track ip) {
+                          <span class="group-member-chip" (click)="crossFilter('ip', ip)">{{ ip }}</span>
+                        } @empty {
+                          <span class="muted">Нет участников</span>
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                }
               }
             </tbody>
           </table>
